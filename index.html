@@ -293,7 +293,6 @@ import ManifoldModule from './vendor/manifold/manifold.js';
 //  Scene setup
 // ============================================================
 const viewport = document.getElementById('viewport');
-THREE.ColorManagement.enabled = false;
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
@@ -301,6 +300,16 @@ viewport.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x15181d);
+
+// 環境マップを生成（本家Three.jsエディターと同方式。全方位から柔らかく照らす）
+const pmrem = new THREE.PMREMGenerator(renderer);
+const envScene = new THREE.Scene();
+envScene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 2));
+const envLight = new THREE.DirectionalLight(0xffffff, 2);
+envLight.position.set(1, 3, 2);
+envScene.add(envLight);
+scene.environment = pmrem.fromScene(envScene, 0.04).texture;
+pmrem.dispose();
 
 const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 5000);
 camera.position.set(120, 110, 160);
@@ -310,9 +319,9 @@ controls.enableDamping = true;
 controls.dampingFactor = 0.08;
 
 // 環境光は控えめに（陰影のコントラストを残す）
-scene.add(new THREE.HemisphereLight(0xffffff, 0x3a3f49, 0.5));
+scene.add(new THREE.HemisphereLight(0xffffff, 0x3a3f49, 0.6));
 // メインライト（やや高い位置から）
-const dir = new THREE.DirectionalLight(0xffffff, 1.25);
+const dir = new THREE.DirectionalLight(0xffffff, 1.5);
 dir.position.set(80, 160, 100);
 dir.castShadow = true;
 dir.shadow.mapSize.set(2048, 2048);
@@ -322,11 +331,11 @@ dir.shadow.camera.far = 600;
 dir.shadow.bias = -0.0003;
 scene.add(dir);
 // 斜め横からのレイキングライト（立ち上がった壁・レリーフを際立たせる）
-const rake = new THREE.DirectionalLight(0xdfe8ff, 0.8);
+const rake = new THREE.DirectionalLight(0xdfe8ff, 0.9);
 rake.position.set(-140, 60, -40);
 scene.add(rake);
 // 反対側からの弱いフィル（陰が真っ黒になりすぎないように）
-const fill = new THREE.DirectionalLight(0xffffff, 0.35);
+const fill = new THREE.DirectionalLight(0xffffff, 0.4);
 fill.position.set(40, 30, -120);
 scene.add(fill);
 
@@ -737,7 +746,7 @@ function doRebuild() {
   for (const node of childNodes(model)) {
     const geom = evalGeometry(node);
     if (!geom) continue;
-    const mesh = new THREE.Mesh(geom, new THREE.MeshPhongMaterial({ color: node.userData.color, shininess: 60 }));
+    const mesh = new THREE.Mesh(geom, new THREE.MeshStandardMaterial({ color: node.userData.color, roughness: 0.55, metalness: 0.05 }));
     mesh.castShadow = mesh.receiveShadow = true;
     mesh.userData.topId = node.userData.id;
     display.add(mesh);
