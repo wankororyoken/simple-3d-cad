@@ -727,6 +727,55 @@ function nodeToManifold(node) {
 }
 
 // node → watertight THREE geometry (or null)
+// 折れ目（クリース）付き法線を自前計算する。
+// 角度がしきい値より急な辺はシャープに、ゆるい辺はなめらかに見える。
+// （Manifold の calculateNormals がこの WASM 版でゼロ法線を返すため自前実装）
+function computeCreasedNormals(geometry, creaseAngle) {
+  const creaseDot = Math.cos(creaseAngle == null ? Math.PI / 4 : creaseAngle);
+  const hashMul = (1 + 1e-10) * 1e2;
+  const v0 = new THREE.Vector3(), v1 = new THREE.Vector3(), v2 = new THREE.Vector3();
+  const e1 = new THREE.Vector3(), e2 = new THREE.Vector3();
+  const fn = new THREE.Vector3(), acc = new THREE.Vector3();
+  const g = geometry.index ? geometry.toNonIndexed() : geometry;
+  const pos = g.attributes.position;
+  const verts = [v0, v1, v2];
+  const hash = v => `${~~(v.x * hashMul)},${~~(v.y * hashMul)},${~~(v.z * hashMul)}`;
+  const map = {};
+  const faceCount = pos.count / 3;
+  // 1パス目：同じ位置の頂点が持つ面法線をすべて集める
+  for (let i = 0; i < faceCount; i++) {
+    const i3 = 3 * i;
+    v0.fromBufferAttribute(pos, i3); v1.fromBufferAttribute(pos, i3 + 1); v2.fromBufferAttribute(pos, i3 + 2);
+    e1.subVectors(v2, v1); e2.subVectors(v0, v1);
+    const n = new THREE.Vector3().crossVectors(e1, e2).normalize();
+    for (let k = 0; k < 3; k++) {
+      const h = hash(verts[k]);
+      (map[h] || (map[h] = [])).push(n);
+    }
+  }
+  // 2パス目：しきい値以内の面法線だけを平均する
+  const nor = new Float32Array(pos.count * 3);
+  const na = new THREE.BufferAttribute(nor, 3);
+  for (let i = 0; i < faceCount; i++) {
+    const i3 = 3 * i;
+    v0.fromBufferAttribute(pos, i3); v1.fromBufferAttribute(pos, i3 + 1); v2.fromBufferAttribute(pos, i3 + 2);
+    e1.subVectors(v2, v1); e2.subVectors(v0, v1);
+    fn.crossVectors(e1, e2).normalize();
+    for (let k = 0; k < 3; k++) {
+      const others = map[hash(verts[k])];
+      acc.set(0, 0, 0);
+      for (let j = 0; j < others.length; j++) {
+        if (fn.dot(others[j]) > creaseDot) acc.add(others[j]);
+      }
+      acc.normalize();
+      if (!isFinite(acc.x)) fn.toArray(nor, (i3 + k) * 3);
+      else na.setXYZ(i3 + k, acc.x, acc.y, acc.z);
+    }
+  }
+  g.setAttribute('normal', na);
+  return g;
+}
+
 function evalGeometry(node) {
   if (!manifoldReady) return null;
   let man;
@@ -734,20 +783,18 @@ function evalGeometry(node) {
   if (!man) return null;
   let geo = null;
   try {
-    const withN = man.calculateNormals(3, 40);   // store normals at channel 3; edges >40° stay sharp
-    man.delete(); man = withN;
     const m = man.getMesh();
     if (m.triVerts.length) {
       const np = m.numProp, vp = m.vertProperties, nv = vp.length / np;
-      const pos = new Float32Array(nv * 3), nor = new Float32Array(nv * 3);
+      const pos = new Float32Array(nv * 3);
       for (let i = 0; i < nv; i++) {
         pos[i*3] = vp[i*np]; pos[i*3+1] = vp[i*np+1]; pos[i*3+2] = vp[i*np+2];
-        nor[i*3] = vp[i*np+3]; nor[i*3+1] = vp[i*np+4]; nor[i*3+2] = vp[i*np+5];
       }
       geo = new THREE.BufferGeometry();
       geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-      geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
       geo.setIndex(new THREE.BufferAttribute(m.triVerts.slice(), 1));
+      // 法線は Three.js 側で自前計算（40°でシャープ／なめらかを切替）
+      geo = computeCreasedNormals(geo, 40 * Math.PI / 180);
       geo.computeBoundingBox();
     }
   } catch (e) { console.error(e); }
