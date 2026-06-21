@@ -265,6 +265,23 @@
   </div>
 </div>
 
+<script>
+// 画面に見えるエラー表示（非技術者向けの診断用）。どんなJSエラーも赤帯で出す。
+(function () {
+  function show(msg) {
+    let el = document.getElementById('errBanner');
+    if (!el) {
+      el = document.createElement('div'); el.id = 'errBanner';
+      el.style.cssText = 'position:fixed;left:0;right:0;top:0;z-index:99999;background:#b00020;color:#fff;font:13px/1.5 monospace;padding:10px 14px;white-space:pre-wrap;max-height:50vh;overflow:auto';
+      (document.body || document.documentElement).appendChild(el);
+    }
+    el.textContent += msg + '\n';
+  }
+  window.addEventListener('error', e => show('ERROR: ' + (e.message || e.error) + (e.filename ? '  @' + e.filename + ':' + e.lineno : '')));
+  window.addEventListener('unhandledrejection', e => show('PROMISE: ' + (e.reason && (e.reason.stack || e.reason.message) || e.reason)));
+})();
+</script>
+
 <script src="./vendor/potrace.js"></script>
 <script src="./vendor/opentype.min.js"></script>
 
@@ -297,6 +314,22 @@ const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
 viewport.appendChild(renderer.domElement);
+
+// 診断：GPU情報を画面に表示（黒画面の原因切り分け用。後で削除予定）
+window.__diag = msg => {
+  let el = document.getElementById('diagBanner');
+  if (!el) {
+    el = document.createElement('div'); el.id = 'diagBanner';
+    el.style.cssText = 'position:fixed;left:0;bottom:0;z-index:99998;background:#0a4;color:#fff;font:12px/1.4 monospace;padding:6px 10px;white-space:pre-wrap;max-width:80vw';
+    document.body.appendChild(el);
+  }
+  el.textContent += msg + '\n';
+};
+try {
+  const gl = renderer.getContext();
+  const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+  window.__diag('GPU: ' + (dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : '不明') + ' / WebGL2=' + (renderer.capabilities.isWebGL2));
+} catch (e) { window.__diag('GPU診断失敗: ' + e.message); }
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x15181d);
@@ -743,9 +776,25 @@ function clearGroup(g) {
 function doRebuild() {
   clearGroup(display);
   clearGroup(edgeGroup);
+  let diagDone = window.__diagNormals;
   for (const node of childNodes(model)) {
     const geom = evalGeometry(node);
     if (!geom) continue;
+    // 診断：最初の図形の法線が正常か（NaN/ゼロでないか）を1回だけ報告
+    if (!diagDone && window.__diag) {
+      diagDone = window.__diagNormals = true;
+      const na = geom.getAttribute('normal');
+      if (!na) window.__diag('法線: なし（←これが黒の原因かも）');
+      else {
+        let bad = 0, zero = 0;
+        for (let i = 0; i < na.count; i++) {
+          const x = na.getX(i), y = na.getY(i), z = na.getZ(i);
+          if (!isFinite(x) || !isFinite(y) || !isFinite(z)) bad++;
+          else if (x === 0 && y === 0 && z === 0) zero++;
+        }
+        window.__diag('法線: 頂点' + na.count + ' NaN=' + bad + ' ゼロ=' + zero + (bad || zero ? ' ←黒の原因' : ' (正常)'));
+      }
+    }
     const mesh = new THREE.Mesh(geom, new THREE.MeshStandardMaterial({ color: node.userData.color, roughness: 0.55, metalness: 0.05 }));
     mesh.castShadow = mesh.receiveShadow = true;
     mesh.userData.topId = node.userData.id;
