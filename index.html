@@ -1,0 +1,1453 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>かんたん3D CAD</title>
+<style>
+  :root {
+    --bg: #1e2228;
+    --panel: #272c34;
+    --panel2: #2f353e;
+    --line: #3a414b;
+    --text: #e6e9ee;
+    --muted: #9aa3af;
+    --accent: #4f9cff;
+    --accent2: #3b82f6;
+    --danger: #ef5b5b;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; font-family: system-ui, "Hiragino Kaku Gothic ProN", Meiryo, sans-serif; color: var(--text); background: var(--bg); }
+  #app { display: grid; grid-template-columns: 230px 1fr 270px; grid-template-rows: 44px 1fr; height: 100vh; }
+  header {
+    grid-column: 1 / 4; display: flex; align-items: center; gap: 10px;
+    padding: 0 14px; background: var(--panel); border-bottom: 1px solid var(--line);
+  }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: .3px; white-space: nowrap; flex-shrink: 0; }
+  header .spacer { flex: 1; }
+  header .hint { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  header button { white-space: nowrap; flex-shrink: 0; }
+  .modes { display: flex; gap: 5px; flex-shrink: 0; }
+  .modebtn { padding: 5px 10px; font-size: 13px; }
+  .modebtn kbd { margin-left: 2px; }
+  .modebtn.active { background: var(--accent2); border-color: var(--accent); color: #fff; box-shadow: 0 0 0 1px var(--accent) inset; }
+  .modebtn.active kbd { background: rgba(255,255,255,.18); border-color: rgba(255,255,255,.35); }
+  .tb-label { font-size: 12px; color: var(--muted); align-self: center; padding-left: 2px; }
+  .sidebar { background: var(--panel); overflow-y: auto; }
+  #left { border-right: 1px solid var(--line); }
+  #right { border-left: 1px solid var(--line); }
+  .section { padding: 12px; border-bottom: 1px solid var(--line); }
+  .section h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); margin: 0 0 9px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
+  button {
+    font: inherit; font-size: 13px; color: var(--text); background: var(--panel2);
+    border: 1px solid var(--line); border-radius: 7px; padding: 8px 9px; cursor: pointer;
+    transition: background .12s, border-color .12s; text-align: center;
+  }
+  button:hover { background: #353c46; border-color: #4a525e; }
+  button:active { background: #2b313a; }
+  button.primary { background: var(--accent2); border-color: var(--accent2); }
+  button.primary:hover { background: var(--accent); }
+  button.danger { color: #ffd9d9; }
+  button.danger:hover { background: #45302f; border-color: var(--danger); }
+  button.active { background: var(--accent2); border-color: var(--accent); }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  #viewport { position: relative; background: #15181d; overflow: hidden; }
+  #viewport canvas { display: block; position: absolute; inset: 0; z-index: 0; }
+  #tree { list-style: none; margin: 0; padding: 0; }
+  .node-row {
+    display: flex; align-items: center; gap: 6px; padding: 6px 8px; font-size: 13px;
+    cursor: pointer; border-radius: 6px; user-select: none;
+  }
+  .node-row:hover { background: var(--panel2); }
+  .node-row.sel { background: #2b3a52; }
+  .node-row.active { background: #34507a; }
+  .node-row .twist { width: 14px; flex-shrink: 0; color: var(--muted); font-size: 10px; text-align: center; }
+  .node-row .swatch { width: 12px; height: 12px; border-radius: 3px; flex-shrink: 0; }
+  .node-row .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .node-row .badge { font-size: 10px; color: var(--muted); background: #1b1f25; border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; flex-shrink: 0; }
+  #tree .empty { color: var(--muted); font-size: 12px; padding: 6px 2px; }
+  .row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .row label { width: 54px; color: var(--muted); font-size: 12px; flex-shrink: 0; }
+  .row .axes { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 5px; flex: 1; }
+  .axhdr { margin-bottom: 2px; }
+  .axhdr .axes span { text-align: center; font-size: 11px; font-weight: 600; letter-spacing: .5px; }
+  .ax-x { color: #e06464; } .ax-y { color: #5fbf6a; } .ax-z { color: #5a8fe0; }
+  input[type=number], input[type=text] {
+    width: 100%; font: inherit; font-size: 12px; color: var(--text); background: #1b1f25;
+    border: 1px solid var(--line); border-radius: 6px; padding: 6px; -moz-appearance: textfield;
+  }
+  input[type=color] { width: 100%; height: 30px; padding: 0; border: 1px solid var(--line); border-radius: 6px; background: #1b1f25; cursor: pointer; }
+  .muted { color: var(--muted); font-size: 12px; line-height: 1.5; }
+  .toolbar {
+    position: absolute; top: 12px; left: 12px; z-index: 5; display: flex; gap: 6px; align-items: center;
+    background: rgba(39,44,52,.92); padding: 6px; border-radius: 9px; border: 1px solid var(--line); backdrop-filter: blur(6px);
+  }
+  .toolbar button { padding: 7px 11px; min-width: 40px; }
+  .toolbar select { font: inherit; font-size: 12px; color: var(--text); background: var(--panel2); border: 1px solid var(--line); border-radius: 7px; padding: 6px; cursor: pointer; }
+  #stats { position: absolute; bottom: 10px; left: 12px; z-index: 5; color: var(--muted); font-size: 12px; background: rgba(21,24,29,.7); padding: 4px 9px; border-radius: 6px; }
+  #toast { position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%); z-index: 6; background: #2b3a52; border: 1px solid var(--accent); color: var(--text); padding: 9px 16px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity .25s; pointer-events: none; }
+  #toast.show { opacity: 1; }
+  .divider { height: 1px; background: var(--line); margin: 4px 0 10px; }
+  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; z-index: 100; }
+  .modal { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; width: 560px; max-width: 92vw; box-shadow: 0 20px 60px rgba(0,0,0,.5); }
+  .modal h3 { margin: 0 0 14px; font-size: 15px; }
+  .trace-body { display: grid; grid-template-columns: 1fr 200px; gap: 16px; }
+  #tracePreview { width: 100%; background: #fff; border: 1px solid var(--line); border-radius: 8px; image-rendering: pixelated; max-height: 320px; object-fit: contain; }
+  .trace-ctrl label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px; }
+  .trace-ctrl label.chk { color: var(--text); margin-top: 12px; }
+  .trace-ctrl input[type=range] { width: 100%; }
+  .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+  kbd { background: #1b1f25; border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; font-size: 11px; font-family: inherit; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>🧊 かんたん3D CAD</h1>
+    <span class="modes">
+      <button id="modeTranslate" class="modebtn active" title="移動 (W)">移動 <kbd>W</kbd></button>
+      <button id="modeRotate" class="modebtn" title="回転 (E)">回転 <kbd>E</kbd></button>
+      <button id="modeScale" class="modebtn" title="拡縮 (R)">拡縮 <kbd>R</kbd></button>
+    </span>
+    <span class="hint">複製 <kbd>Ctrl+D</kbd> ／ 削除 <kbd>Del</kbd></span>
+    <span class="spacer"></span>
+    <button id="importSvgBtn">SVG読込</button>
+    <button id="traceBtn">画像トレース</button>
+    <button id="importStlBtn">STL読込</button>
+    <button id="saveBtn">保存(JSON)</button>
+    <button id="loadBtn">読込</button>
+    <button id="exportBtn" class="primary">STL書き出し</button>
+  </header>
+
+  <aside id="left" class="sidebar">
+    <div class="section">
+      <h2>図形を追加</h2>
+      <div class="grid2">
+        <button data-add="box">⬛ 直方体</button>
+        <button data-add="roundedprism">▢ 角丸ボックス</button>
+        <button data-add="cylinder">⬤ 円柱</button>
+        <button data-add="taper">▽ 円錐台</button>
+        <button data-add="sphere">● 球</button>
+        <button data-add="cone">▲ 円錐</button>
+        <button data-add="torus">◯ トーラス</button>
+        <button data-add="pyramid">◆ 四角錐</button>
+        <button data-add="text" disabled>🅰 文字(読込中)</button>
+      </div>
+    </div>
+    <div class="section">
+      <h2>図形を組み合わせる</h2>
+      <div class="muted" style="margin-bottom:8px">同じ階層の図形を2つ選んで実行（<kbd>Shift</kbd>+クリックで2つ目）。組み合わせ後も中の図形は個別に編集できます。</div>
+      <div class="grid3">
+        <button id="opUnion" disabled>合体 ∪</button>
+        <button id="opSubtract" disabled>くり抜き −</button>
+        <button id="opIntersect" disabled>共通 ∩</button>
+      </div>
+    </div>
+    <div class="section">
+      <h2>構造ツリー</h2>
+      <ul id="tree"></ul>
+    </div>
+  </aside>
+
+  <main id="viewport">
+    <div class="toolbar">
+      <button id="undoBtn" title="元に戻す (Ctrl+Z)" disabled>↩ 戻す</button>
+      <button id="redoBtn" title="やり直す (Ctrl+Shift+Z)" disabled>↪ やり直す</button>
+      <span style="width:12px"></span>
+      <span class="tb-label">スナップ</span>
+      <button id="snapBtn" title="移動/回転をきりのいい値で止める">切</button>
+      <select id="snapSize" title="移動スナップ間隔">
+        <option value="1">1mm</option>
+        <option value="5" selected>5mm</option>
+        <option value="10">10mm</option>
+      </select>
+      <select id="snapAngle" title="回転スナップ角度">
+        <option value="15">15°</option>
+        <option value="45" selected>45°</option>
+        <option value="90">90°</option>
+      </select>
+    </div>
+    <div id="stats"></div>
+    <div id="toast"></div>
+  </main>
+
+  <aside id="right" class="sidebar">
+    <div class="section" id="propEmpty">
+      <h2>プロパティ</h2>
+      <div class="muted">図形を選択すると、位置・サイズ・色などを編集できます。結合形状は構造ツリーから中の図形を選べます。</div>
+    </div>
+    <div class="section" id="propPanel" style="display:none">
+      <h2>プロパティ</h2>
+      <div class="row"><label>名前</label><input type="text" id="pName" /></div>
+      <div id="opWrap" style="display:none">
+        <div class="row"><label>演算</label>
+          <div class="axes">
+            <button id="setUnion" data-op="union">合体</button>
+            <button id="setSubtract" data-op="subtract">くり抜き</button>
+            <button id="setIntersect" data-op="intersect">共通</button>
+          </div>
+        </div>
+        <div class="muted" id="opHint" style="margin:-2px 0 8px"></div>
+      </div>
+      <div class="divider"></div>
+      <div class="row axhdr"><label></label><div class="axes">
+        <span class="ax-x">X</span><span class="ax-y">Y</span><span class="ax-z">Z</span></div></div>
+      <div class="row"><label>位置</label><div class="axes">
+        <input type="number" id="px" step="1" /><input type="number" id="py" step="1" /><input type="number" id="pz" step="1" /></div></div>
+      <div class="row"><label>回転°</label><div class="axes">
+        <input type="number" id="rx" step="5" /><input type="number" id="ry" step="5" /><input type="number" id="rz" step="5" /></div></div>
+      <div class="row" id="scaleRow"><label>拡縮</label><div class="axes">
+        <input type="number" id="sx" step="0.1" /><input type="number" id="sy" step="0.1" /><input type="number" id="sz" step="0.1" /></div></div>
+      <div id="dimSection">
+        <div class="divider"></div>
+        <div id="dimWrap"></div>
+      </div>
+      <div id="colorSection">
+        <div class="divider"></div>
+        <div class="row"><label>色</label><input type="color" id="pColor" /></div>
+      </div>
+      <div class="grid2" style="margin-top:10px">
+        <button id="dupBtn">複製</button>
+        <button id="delBtn" class="danger">削除</button>
+      </div>
+      <button id="dropBtn" title="底面をXZ平面(テーブル)に合わせる" style="margin-top:6px; width:100%">⤓ テーブルに置く</button>
+      <button id="hollowBtn" title="壁の厚みを残して中をくり抜く（コップ・容器に）" style="display:none; margin-top:6px; width:100%">🥤 中空化（コップ状に）</button>
+      <button id="ungroupBtn" style="display:none; margin-top:6px; width:100%">結合を解除（中の図形に分解）</button>
+    </div>
+    <div class="section">
+      <h2 id="measureHead">計測（全体）</h2>
+      <div class="muted" id="measure">—</div>
+      <div class="row" style="margin-top:8px;">
+        <label for="infill">インフィル</label>
+        <input id="infill" type="range" min="0" max="100" step="5" value="20" style="flex:1; min-width:0;">
+        <span id="infillVal" style="width:40px; text-align:right; font-size:12px; flex-shrink:0;">20%</span>
+      </div>
+      <div class="row">
+        <label for="wallmm">外壁厚</label>
+        <input id="wallmm" type="number" min="0" step="0.1" value="1.2" style="flex:1; min-width:0;">
+        <span class="muted" style="font-size:12px; flex-shrink:0;">mm</span>
+      </div>
+    </div>
+    <div class="section">
+      <h2>サイズの目安</h2>
+      <div class="muted">単位は <b>1 = 1mm</b>。グリッド1マス = 10mm。3Dでクリックすると結合形状全体を選択、中の図形は左の構造ツリーから選びます。</div>
+    </div>
+  </aside>
+</div>
+
+<input type="file" id="fileInput" accept=".json" style="display:none" />
+<input type="file" id="stlInput" accept=".stl" style="display:none" />
+<input type="file" id="svgInput" accept=".svg" style="display:none" />
+<input type="file" id="imgInput" accept="image/*" style="display:none" />
+
+<div id="traceModal" class="modal-overlay" style="display:none">
+  <div class="modal">
+    <h3>画像トレース → 3D化</h3>
+    <div class="trace-body">
+      <canvas id="tracePreview"></canvas>
+      <div class="trace-ctrl">
+        <label>しきい値 <span id="thVal">128</span></label>
+        <input type="range" id="thRange" min="1" max="254" value="128" />
+        <label class="chk"><input type="checkbox" id="thInvert" /> 明暗を反転</label>
+        <label>ノイズ除去 <span id="tsVal">2</span></label>
+        <input type="range" id="tsRange" min="0" max="20" value="2" />
+        <label>厚み (mm) <span id="depVal">4</span></label>
+        <input type="range" id="depRange" min="1" max="30" value="4" />
+        <div class="muted" style="margin-top:4px">黒く見える部分が立体になります。スライダーで調整してください。</div>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button id="traceCancel">キャンセル</button>
+      <button id="traceGo" class="primary">3D化する</button>
+    </div>
+  </div>
+</div>
+
+<script src="./vendor/potrace.js"></script>
+<script src="./vendor/opentype.min.js"></script>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three/three.module.js",
+    "three/addons/": "./vendor/three/addons/",
+    "three-mesh-bvh": "./vendor/three-mesh-bvh/index.module.js",
+    "three-bvh-csg": "./vendor/three-bvh-csg/index.module.js"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { TransformControls } from 'three/addons/controls/TransformControls.js';
+import { STLExporter } from 'three/addons/exporters/STLExporter.js';
+import { STLLoader } from 'three/addons/loaders/STLLoader.js';
+import { SVGLoader } from 'three/addons/loaders/SVGLoader.js';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import ManifoldModule from './vendor/manifold/manifold.js';
+
+// ============================================================
+//  Scene setup
+// ============================================================
+const viewport = document.getElementById('viewport');
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+viewport.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x15181d);
+
+const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 5000);
+camera.position.set(120, 110, 160);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+
+// 環境光は控えめに（陰影のコントラストを残す）
+scene.add(new THREE.HemisphereLight(0xffffff, 0x3a3f49, 0.5));
+// メインライト（やや高い位置から）
+const dir = new THREE.DirectionalLight(0xffffff, 1.25);
+dir.position.set(80, 160, 100);
+dir.castShadow = true;
+dir.shadow.mapSize.set(2048, 2048);
+dir.shadow.camera.left = -200; dir.shadow.camera.right = 200;
+dir.shadow.camera.top = 200; dir.shadow.camera.bottom = -200;
+dir.shadow.camera.far = 600;
+dir.shadow.bias = -0.0003;
+scene.add(dir);
+// 斜め横からのレイキングライト（立ち上がった壁・レリーフを際立たせる）
+const rake = new THREE.DirectionalLight(0xdfe8ff, 0.8);
+rake.position.set(-140, 60, -40);
+scene.add(rake);
+// 反対側からの弱いフィル（陰が真っ黒になりすぎないように）
+const fill = new THREE.DirectionalLight(0xffffff, 0.35);
+fill.position.set(40, 30, -120);
+scene.add(fill);
+
+const grid = new THREE.GridHelper(400, 40, 0x4a525e, 0x2c323b);
+scene.add(grid);
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), new THREE.ShadowMaterial({ opacity: 0.28 }));
+ground.rotation.x = -Math.PI / 2; ground.position.y = -0.01; ground.receiveShadow = true;
+scene.add(ground);
+scene.add(new THREE.AxesHelper(40));
+
+// model = logical tree (CADNodes carry transforms). display = baked meshes shown to user.
+const model = new THREE.Group();   scene.add(model);
+const display = new THREE.Group();  scene.add(display);
+const edgeGroup = new THREE.Group(); scene.add(edgeGroup);   // 形の輪郭線（選択や計測には含めない）
+const highlightGroup = new THREE.Group(); scene.add(highlightGroup);
+
+// ============================================================
+//  Undo / Redo
+// ============================================================
+const UNDO_LIMIT = 50;
+const undoStack = [], redoStack = [];
+function snapshotState() {
+  return { tree: childNodes(model).map(serialize), sel: selected.map(n => n.userData.id) };
+}
+function pushUndo() {
+  undoStack.push(snapshotState());
+  if (undoStack.length > UNDO_LIMIT) undoStack.shift();
+  redoStack.length = 0;
+  updateUndoButtons();
+}
+function restoreState(snap) {
+  childNodes(model).forEach(c => model.remove(c));
+  snap.tree.forEach(o => model.add(deserialize(o)));
+  selected.length = 0;
+  snap.sel.forEach(id => { const n = findById(id); if (n) selected.push(n); });
+  const a = activeNode();
+  if (a) transform.attach(a); else transform.detach();
+  renderTree(); refreshProps(); updateBoolButtons(); updateHighlight(); updateMeasure(); requestRebuild();
+}
+function undo() {
+  if (!undoStack.length) return;
+  redoStack.push(snapshotState());
+  restoreState(undoStack.pop());
+  updateUndoButtons();
+}
+function redo() {
+  if (!redoStack.length) return;
+  undoStack.push(snapshotState());
+  restoreState(redoStack.pop());
+  updateUndoButtons();
+}
+function updateUndoButtons() {
+  document.getElementById('undoBtn').disabled = !undoStack.length;
+  document.getElementById('redoBtn').disabled = !redoStack.length;
+}
+
+const transform = new TransformControls(camera, renderer.domElement);
+transform.addEventListener('dragging-changed', e => {
+  controls.enabled = !e.value;
+  if (e.value) pushUndo();
+  // 拡縮ドラッグを離したら、倍率を実寸に焼き込んでパネルを実寸表示に更新する
+  if (!e.value) { const a = activeNode(); if (bakeScale(a)) { syncPanelFromNode(a); refreshProps(); requestRebuild(); } }
+});
+transform.addEventListener('objectChange', () => {
+  const a = activeNode(); if (a) { syncPanelFromNode(a); requestRebuild(); }
+});
+scene.add(transform);
+
+// ============================================================
+//  Data model:  CADNode is a THREE.Object3D carrying transform.
+//    userData.kind = 'primitive' | 'group'
+//    primitive: type, params
+//    group:     op ('union'|'subtract'|'intersect')
+//    both:      name, color, id, expanded
+// ============================================================
+let uid = 0, counter = 0;
+const palette = [0x4f9cff, 0xef8c5b, 0x5bd6a0, 0xc98cff, 0xf0d35b, 0xff7aa8];
+const labels = { box:'直方体', roundedprism:'角丸ボックス', cylinder:'円柱', taper:'円錐台', sphere:'球', cone:'円錐', pyramid:'四角錐', torus:'トーラス', text:'文字', group:'結合形状' };
+const svgDimDefs = [['depth','厚み mm'],['size','大きさ mm'],['wall','線の太さ mm(0=塗り)']];
+const opLabel = { union:'合体', subtract:'くり抜き', intersect:'共通部分' };
+
+const defaults = {
+  box:      { w: 30, h: 30, d: 30, fillet: 0 },
+  roundedprism: { w: 40, h: 20, d: 40, r: 8 },
+  cylinder: { r: 15, h: 30, seg: 48 },
+  taper:    { rt: 12, rb: 16, h: 40, seg: 48 },
+  sphere:   { r: 18, seg: 48 },
+  cone:     { r: 16, h: 34, seg: 48 },
+  pyramid:  { r: 20, h: 34 },
+  torus:    { r: 18, t: 6, seg: 48 },
+  text:     { text: 'ABC', size: 14, depth: 6 },
+};
+const dimDefs = {
+  box: [['w','幅 X'],['h','高さ Y'],['d','奥行 Z'],['fillet','角丸め r']],
+  roundedprism: [['w','幅 X'],['d','奥行 Z'],['h','高さ Y'],['r','角丸め r']],
+  cylinder: [['r','直径'],['h','高さ'],['seg','分割数']],
+  taper: [['rt','上の直径'],['rb','下の直径'],['h','高さ'],['seg','分割数']],
+  sphere: [['r','直径'],['seg','分割数']],
+  cone: [['r','直径'],['h','高さ'],['seg','分割数']],
+  pyramid: [['r','底半径'],['h','高さ']],
+  torus: [['r','直径(リング)'],['t','太さ'],['seg','分割数']],
+  text: [['text','文字'],['size','サイズ'],['depth','厚み']],
+};
+// 内部は半径で保持するが入力欄では直径表示にするキー
+const diaKeys = {
+  cylinder: ['r'], taper: ['rt', 'rb'], sphere: ['r'], cone: ['r'], torus: ['r', 't'],
+};
+
+let jpFont = null;   // opentype.js font (Japanese); 文字 button stays disabled until ready
+
+// 原点中心の角丸長方形シェイプ（XY平面、幅w・高さh、角半径r）
+function roundedRectShape(w, h, r) {
+  const hw = w / 2, hh = h / 2;
+  const s = new THREE.Shape();
+  s.moveTo(-hw + r, -hh);
+  s.lineTo(hw - r, -hh);
+  s.quadraticCurveTo(hw, -hh, hw, -hh + r);
+  s.lineTo(hw, hh - r);
+  s.quadraticCurveTo(hw, hh, hw - r, hh);
+  s.lineTo(-hw + r, hh);
+  s.quadraticCurveTo(-hw, hh, -hw, hh - r);
+  s.lineTo(-hw, -hh + r);
+  s.quadraticCurveTo(-hw, -hh, -hw + r, -hh);
+  return s;
+}
+
+function buildGeometry(type, p) {
+  switch (type) {
+    case 'box': {
+      const f = Math.min(p.fillet || 0, Math.min(p.w, p.h, p.d) / 2 - 0.01);
+      if (f > 0.05) return new RoundedBoxGeometry(p.w, p.h, p.d, 4, f);
+      return new THREE.BoxGeometry(p.w, p.h, p.d);
+    }
+    case 'roundedprism': {
+      // XZ平面（上から見た形）だけ角を丸めた柱。壁は垂直、上下面は平ら。
+      const r = Math.max(0, Math.min(p.r || 0, Math.min(p.w, p.d) / 2 - 0.01));
+      const shape = roundedRectShape(p.w, p.d, r);
+      const geo = new THREE.ExtrudeGeometry(shape, { depth: p.h, bevelEnabled: false, curveSegments: 12 });
+      geo.translate(0, 0, -p.h / 2);   // 押し出し方向(Z)を中心に
+      geo.rotateX(-Math.PI / 2);       // 押し出し軸をYへ → 幅X・高さY・奥行Z
+      return geo;
+    }
+    case 'cylinder': return new THREE.CylinderGeometry(p.r, p.r, p.h, p.seg);
+    case 'taper': return new THREE.CylinderGeometry(p.rt, p.rb, p.h, p.seg);
+    case 'sphere': return new THREE.SphereGeometry(p.r, p.seg, Math.max(8, Math.round(p.seg / 2)));
+    case 'cone': return new THREE.ConeGeometry(p.r, p.h, p.seg);
+    case 'pyramid': return new THREE.ConeGeometry(p.r, p.h, 4);
+    case 'torus': return new THREE.TorusGeometry(p.r, p.t, 16, p.seg);
+    case 'text': {
+      // 実際の立体は textToManifold が watertight に生成する。ここは配置(テーブルに乗せる)用の
+      // 外形サイズ(bbox)だけ分かれば十分なので、文字の縦横に合わせた箱を返す。
+      const rings = textContours((p.text && p.text.length) ? p.text : ' ', p.size);
+      if (!rings.length) return new THREE.BoxGeometry(1, 1, p.depth);
+      let minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;
+      rings.forEach(c => c.forEach(([x, y]) => { if (x < minx) minx = x; if (x > maxx) maxx = x; if (y < miny) miny = y; if (y > maxy) maxy = y; }));
+      return new THREE.BoxGeometry(Math.max(0.1, maxx - minx), Math.max(0.1, maxy - miny), p.depth);
+    }
+  }
+}
+
+opentype.load('./vendor/fonts/SawarabiGothic-Regular.ttf', (err, f) => {
+  if (err) { console.error(err); toast('フォントの読込に失敗しました', true); return; }
+  jpFont = f;
+  const btn = document.querySelector('[data-add="text"]');
+  if (btn) { btn.disabled = false; btn.textContent = '🅰 文字'; }
+});
+
+const svgLoader = new SVGLoader();
+
+// number of usable shapes in an SVG (import validation)
+function svgShapeCount(svgText) {
+  const data = svgLoader.parse(svgText);
+  let n = 0;
+  data.paths.forEach(path => { n += SVGLoader.createShapes(path).length; });
+  return n;
+}
+
+// SVG leaf → watertight Manifold using Manifold's OWN extrude (clean flat caps).
+// Each contour is extruded as a CrossSection and unioned; then oriented & placed.
+function svgToManifold(node) {
+  const p = node.userData.params;
+  const depth = Math.max(0.2, p.depth || 4), size = Math.max(1, p.size || 50);
+  const data = svgLoader.parse(node.userData.svg);
+  // collect EVERY contour (outer + holes of every shape) into one list,
+  // then let Manifold's even-odd polygon engine resolve it all in ONE extrude
+  // (no per-piece union → no gaps at seams).
+  const contours = [];
+  let minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;
+  data.paths.forEach(path => SVGLoader.createShapes(path).forEach(shape => {
+    const pts = shape.extractPoints(16);
+    [pts.shape, ...pts.holes].forEach(arr => {
+      const c = arr.map(v => [v.x, -v.y]);                        // negate Y (SVG is y-down)
+      c.forEach(([x, y]) => {
+        if (x < minx) minx = x; if (x > maxx) maxx = x;
+        if (y < miny) miny = y; if (y > maxy) maxy = y;
+      });
+      contours.push(c);
+    });
+  }));
+  if (!contours.length || !isFinite(minx)) return null;
+  const s = size / Math.max(maxx - minx, maxy - miny, 0.001);
+  const cx = (minx + maxx) / 2, cy = (miny + maxy) / 2;
+  const tc = contours.map(c => c.map(([x, y]) => [(x - cx) * s, (y - cy) * s]));   // center + scale to mm
+
+  const wall = Math.max(0, p.wall || 0);
+  let acc = null, cross = null;
+  try {
+    cross = new CrossSection(tc, 'EvenOdd');
+    if (wall > 0) {                                   // uniform-width outline wall (cookie-cutter)
+      const outer = cross.offset(wall / 2, 'Round');
+      const inner = cross.offset(-wall / 2, 'Round');
+      const band = outer.subtract(inner);
+      outer.delete(); inner.delete(); cross.delete();
+      cross = band;
+    }
+    acc = cross.extrude(depth);
+  }
+  catch (e) { console.error(e); }
+  finally { if (cross) cross.delete(); }
+  if (!acc) return null;
+
+  let r = acc.rotate(-90, 0, 0); acc.delete(); acc = r;          // lay flat: thickness → +Y
+  const bb = acc.boundingBox();
+  if (bb.min[1] !== 0) { const t = acc.translate(0, -bb.min[1], 0); acc.delete(); acc = t; }  // rest on plate
+  node.updateWorldMatrix(true, false);
+  const tm = acc.transform([...node.matrixWorld.elements]); acc.delete(); acc = tm;            // apply node transform
+  return acc;
+}
+
+// 文字 → 輪郭の点列(複数)。Y反転で上向きに。曲線はSEG分割。
+function textContours(str, size) {
+  const cmds = jpFont.getPath(str, 0, 0, size).commands;
+  const polys = []; let cur = null, cx = 0, cy = 0; const SEG = 6;
+  for (const c of cmds) {
+    if (c.type === 'M') { cur = []; polys.push(cur); cur.push([c.x, -c.y]); cx = c.x; cy = c.y; }
+    else if (c.type === 'L') { cur.push([c.x, -c.y]); cx = c.x; cy = c.y; }
+    else if (c.type === 'Q') { const sx = cx, sy = cy; for (let i = 1; i <= SEG; i++) { const t = i / SEG, u = 1 - t; cur.push([u * u * sx + 2 * u * t * c.x1 + t * t * c.x, -(u * u * sy + 2 * u * t * c.y1 + t * t * c.y)]); } cx = c.x; cy = c.y; }
+    else if (c.type === 'C') { const sx = cx, sy = cy; for (let i = 1; i <= SEG; i++) { const t = i / SEG, u = 1 - t; cur.push([u * u * u * sx + 3 * u * u * t * c.x1 + 3 * u * t * t * c.x2 + t * t * t * c.x, -(u * u * u * sy + 3 * u * u * t * c.y1 + 3 * u * t * t * c.y2 + t * t * t * c.y)]); } cx = c.x; cy = c.y; }
+  }
+  return polys.filter(c => c.length >= 3);
+}
+
+// 文字 → watertight Manifold。穴の判定はEvenOdd(偶奇)にお任せ＝どんな漢字でも閉じた立体になる。
+// ExtrudeGeometryは穴つき漢字で非watertightになりManifoldに弾かれるため、SVGと同じCrossSection経路を使う。
+function textToManifold(node) {
+  const p = node.userData.params;
+  const size = Math.max(1, p.size || 14), depth = Math.max(0.2, p.depth || 6);
+  const rings = textContours((p.text && p.text.length) ? p.text : ' ', size);
+  if (!rings.length) return null;
+  let minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;
+  rings.forEach(c => c.forEach(([x, y]) => { if (x < minx) minx = x; if (x > maxx) maxx = x; if (y < miny) miny = y; if (y > maxy) maxy = y; }));
+  const cx = (minx + maxx) / 2, cy = (miny + maxy) / 2;
+  const tc = rings.map(c => c.map(([x, y]) => [x - cx, y - cy]));   // X/Yを原点中心に
+  let acc = null, cross = null;
+  try {
+    cross = new CrossSection(tc, 'EvenOdd');
+    acc = cross.extrude(depth);
+  } catch (e) { console.error(e); }
+  finally { if (cross) cross.delete(); }
+  if (!acc) return null;
+  let t = acc.translate(0, 0, -depth / 2); acc.delete(); acc = t;   // 厚みを原点中心に(縦置きのまま)
+  const tm = acc.transform([...node.matrixWorld.elements]); acc.delete(); acc = tm;
+  return acc;
+}
+
+function newSvg(svgText, baseName, depth) {
+  const n = new THREE.Object3D();
+  n.userData = { kind: 'svg', svg: svgText, params: { depth: depth || 4, size: 50, wall: 0 }, color: palette[counter % palette.length], name: baseName + ' ' + (++counter), id: ++uid, expanded: false };
+  return n;
+}
+
+function newPrimitive(type) {
+  const n = new THREE.Object3D();
+  n.userData = { kind: 'primitive', type, params: { ...defaults[type] }, color: palette[counter % palette.length], name: labels[type] + ' ' + (++counter), id: ++uid, expanded: false };
+  return n;
+}
+function newGroup(op) {
+  const n = new THREE.Object3D();
+  n.userData = { kind: 'group', op, color: palette[counter % palette.length], name: labels.group + ' ' + (++counter), id: ++uid, expanded: true };
+  return n;
+}
+function newMesh(geometry, baseName) {
+  const n = new THREE.Object3D();
+  n.userData = { kind: 'mesh', geometry, color: palette[counter % palette.length], name: baseName + ' ' + (++counter), id: ++uid, expanded: false };
+  return n;
+}
+const childNodes = node => node.children.filter(c => c.userData && c.userData.kind);
+const isTopLevel = node => node.parent === model;
+function findById(id, root = model) {
+  for (const c of childNodes(root)) { if (c.userData.id === id) return c; const f = findById(id, c); if (f) return f; }
+  return null;
+}
+
+// ============================================================
+//  CSG evaluation (non-destructive). Returns a Brush in world space.
+// ============================================================
+// Manifold (WASM) guarantees watertight, printable results. Loads async.
+let Manifold = null, ManifoldMesh = null, CrossSection = null, manifoldReady = false;
+ManifoldModule().then(wasm => {
+  wasm.setup();
+  Manifold = wasm.Manifold;
+  ManifoldMesh = wasm.Mesh;
+  CrossSection = wasm.CrossSection;
+  manifoldReady = true;
+  requestRebuild();
+}).catch(err => { console.error(err); toast('Manifold(演算エンジン)の読み込みに失敗しました', true); });
+
+// leaf node → world-space THREE geometry
+function leafGeometry(node) {
+  const k = node.userData.kind;
+  let g;
+  if (k === 'primitive') g = buildGeometry(node.userData.type, node.userData.params);
+  else if (k === 'mesh') g = node.userData.geometry.clone();
+  else return null;
+  g.applyMatrix4(node.matrixWorld);
+  return g;
+}
+
+// THREE geometry → Manifold solid (merge() welds split vertices so it's watertight)
+function geomToManifold(geo) {
+  const posAttr = geo.attributes.position;
+  const vp = posAttr.array instanceof Float32Array ? posAttr.array : new Float32Array(posAttr.array);
+  let tri;
+  if (geo.index) tri = geo.index.array instanceof Uint32Array ? geo.index.array : new Uint32Array(geo.index.array);
+  else { tri = new Uint32Array(posAttr.count); for (let i = 0; i < tri.length; i++) tri[i] = i; }
+  const mesh = new ManifoldMesh({ numProp: 3, vertProperties: vp, triVerts: tri });
+  mesh.merge();
+  return Manifold.ofMesh(mesh);
+}
+
+// recursively evaluate a node into a Manifold (caller must .delete() the result)
+function nodeToManifold(node) {
+  node.updateWorldMatrix(true, false);
+  if (node.userData.kind === 'svg') return svgToManifold(node);
+  if (node.userData.kind === 'primitive' && node.userData.type === 'text') return textToManifold(node);
+  if (node.userData.kind !== 'group') {
+    const g = leafGeometry(node); if (!g) return null;
+    let man = null;
+    try { man = geomToManifold(g); } catch (e) { console.error(e); }
+    if (g.dispose) g.dispose();
+    return man;
+  }
+  let acc = null;
+  for (const child of childNodes(node)) {
+    const cm = nodeToManifold(child);
+    if (!cm) continue;
+    if (!acc) { acc = cm; continue; }
+    const op = node.userData.op;
+    const res = op === 'subtract' ? Manifold.difference(acc, cm)
+              : op === 'intersect' ? Manifold.intersection(acc, cm)
+              : Manifold.union(acc, cm);
+    acc.delete(); cm.delete();
+    acc = res;
+  }
+  return acc;
+}
+
+// node → watertight THREE geometry (or null)
+function evalGeometry(node) {
+  if (!manifoldReady) return null;
+  let man;
+  try { man = nodeToManifold(node); } catch (e) { console.error(e); return null; }
+  if (!man) return null;
+  let geo = null;
+  try {
+    const withN = man.calculateNormals(3, 40);   // store normals at channel 3; edges >40° stay sharp
+    man.delete(); man = withN;
+    const m = man.getMesh();
+    if (m.triVerts.length) {
+      const np = m.numProp, vp = m.vertProperties, nv = vp.length / np;
+      const pos = new Float32Array(nv * 3), nor = new Float32Array(nv * 3);
+      for (let i = 0; i < nv; i++) {
+        pos[i*3] = vp[i*np]; pos[i*3+1] = vp[i*np+1]; pos[i*3+2] = vp[i*np+2];
+        nor[i*3] = vp[i*np+3]; nor[i*3+1] = vp[i*np+4]; nor[i*3+2] = vp[i*np+5];
+      }
+      geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+      geo.setIndex(new THREE.BufferAttribute(m.triVerts.slice(), 1));
+      geo.computeBoundingBox();
+    }
+  } catch (e) { console.error(e); }
+  if (man) man.delete();
+  return geo;
+}
+
+// ============================================================
+//  Rebuild display meshes from the model tree
+// ============================================================
+let rebuildQueued = false;
+function requestRebuild() {
+  if (rebuildQueued) return;
+  rebuildQueued = true;
+  requestAnimationFrame(() => { rebuildQueued = false; doRebuild(); });
+}
+
+function clearGroup(g) {
+  for (let i = g.children.length - 1; i >= 0; i--) {
+    const c = g.children[i];
+    if (c.geometry) c.geometry.dispose();
+    g.remove(c);
+  }
+}
+
+function doRebuild() {
+  clearGroup(display);
+  clearGroup(edgeGroup);
+  for (const node of childNodes(model)) {
+    const geom = evalGeometry(node);
+    if (!geom) continue;
+    const mesh = new THREE.Mesh(geom, new THREE.MeshStandardMaterial({ color: node.userData.color, roughness: 0.55, metalness: 0.05 }));
+    mesh.castShadow = mesh.receiveShadow = true;
+    mesh.userData.topId = node.userData.id;
+    display.add(mesh);
+    // 形の境目に輪郭線を描く（平らな面でも形が分かるように）。30°以上の角だけ線にする
+    const edges = new THREE.LineSegments(
+      new THREE.EdgesGeometry(geom, 30),
+      new THREE.LineBasicMaterial({ color: 0x101216, transparent: true, opacity: 0.5 })
+    );
+    edges.userData.topId = node.userData.id;
+    edgeGroup.add(edges);
+  }
+  updateHighlight();
+  updateMeasure();
+}
+
+// signed-volume sum over triangles → mm³ (geometry is already world-baked)
+function meshVolume(geo) {
+  const pos = geo.attributes.position, idx = geo.index;
+  const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+  const n = idx ? idx.count : pos.count;
+  let v = 0;
+  for (let i = 0; i < n; i += 3) {
+    const ia = idx ? idx.getX(i) : i, ib = idx ? idx.getX(i + 1) : i + 1, ic = idx ? idx.getX(i + 2) : i + 2;
+    a.fromBufferAttribute(pos, ia); b.fromBufferAttribute(pos, ib); c.fromBufferAttribute(pos, ic);
+    v += a.dot(b.clone().cross(c)) / 6;
+  }
+  return Math.abs(v);
+}
+
+// surface area sum over triangles → mm²
+function meshArea(geo) {
+  const pos = geo.attributes.position, idx = geo.index;
+  const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+  const ab = new THREE.Vector3(), ac = new THREE.Vector3();
+  const n = idx ? idx.count : pos.count;
+  let area = 0;
+  for (let i = 0; i < n; i += 3) {
+    const ia = idx ? idx.getX(i) : i, ib = idx ? idx.getX(i + 1) : i + 1, ic = idx ? idx.getX(i + 2) : i + 2;
+    a.fromBufferAttribute(pos, ia); b.fromBufferAttribute(pos, ib); c.fromBufferAttribute(pos, ic);
+    ab.subVectors(b, a); ac.subVectors(c, a);
+    area += ab.cross(ac).length() / 2;
+  }
+  return area;
+}
+
+const measureEl = document.getElementById('measure');
+const measureHeadEl = document.getElementById('measureHead');
+const infillEl = document.getElementById('infill');
+const infillValEl = document.getElementById('infillVal');
+const wallmmEl = document.getElementById('wallmm');
+function updateMeasure() {
+  // 選択中はそのオブジェクトだけ、未選択なら全体を計測する
+  const a = activeNode();
+  let geos, ownGeo = null;
+  if (a) { ownGeo = evalGeometry(a); if (ownGeo) geos = [ownGeo]; }
+  if (geos) { measureHeadEl.textContent = '計測（選択中）'; }
+  else {
+    measureHeadEl.textContent = '計測（全体）';
+    if (!display.children.length) { measureEl.textContent = '図形がありません'; return; }
+    geos = display.children.map(m => m.geometry);
+  }
+  const box = new THREE.Box3();
+  let vol = 0, area = 0;
+  geos.forEach(g => { if (!g.boundingBox) g.computeBoundingBox(); box.union(g.boundingBox); vol += meshVolume(g); area += meshArea(g); });
+  if (ownGeo) ownGeo.dispose();
+  const s = new THREE.Vector3(); box.getSize(s);
+  const cm3 = vol / 1000;
+  const density = 1.24;                                   // PLA g/cm³
+  const infill = Math.min(100, Math.max(0, parseFloat(infillEl.value) || 0)) / 100;
+  const wall = Math.max(0, parseFloat(wallmmEl.value) || 0);
+  // シェル（外壁＋上下面）はほぼ密実、内部だけが指定の充填率という近似
+  const shellVol = Math.min(area * wall, vol);            // mm³（薄物では全体=シェルに頭打ち）
+  const innerVol = vol - shellVol;
+  const printVol = shellVol + innerVol * infill;          // mm³
+  const grams = (printVol / 1000) * density;
+  const solidGrams = cm3 * density;
+  infillValEl.textContent = `${Math.round(infill * 100)}%`;
+  measureEl.innerHTML = `サイズ: <b>${s.x.toFixed(1)} × ${s.y.toFixed(1)} × ${s.z.toFixed(1)}</b> mm<br>` +
+    `体積: <b>${cm3.toFixed(2)}</b> cm³<br>` +
+    `重さ目安(PLA): <b>${grams.toFixed(1)}</b> g <span class="muted">(密実なら ${solidGrams.toFixed(1)} g)</span>`;
+}
+document.getElementById('infill').addEventListener('input', updateMeasure);
+document.getElementById('wallmm').addEventListener('input', updateMeasure);
+
+// ============================================================
+//  Selection & highlight
+// ============================================================
+let selected = [];                       // CADNodes, up to 2
+const activeNode = () => selected[selected.length - 1] || null;
+
+function selectNode(node, additive = false) {
+  if (!node) selected = [];
+  else if (additive) {
+    if (selected.includes(node)) selected = selected.filter(n => n !== node);
+    else selected = [...selected, node].slice(-2);
+  } else selected = [node];
+
+  const a = activeNode();
+  if (bakeScale(a)) requestRebuild();          // 既存の倍率付き図形も選択時に実寸へ正規化
+  if (a) transform.attach(a); else transform.detach();
+  renderTree(); refreshProps(); updateBoolButtons(); updateHighlight(); updateMeasure();
+}
+
+function updateHighlight() {
+  clearGroup(highlightGroup);
+  selected.forEach(node => {
+    const geo = evalGeometry(node); if (!geo) return;
+    const edges = new THREE.EdgesGeometry(geo, 25); geo.dispose();
+    const isActive = node === activeNode();
+    const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: isActive ? 0xffffff : 0xffc24f, depthTest: false, transparent: true }));
+    line.renderOrder = 999;
+    highlightGroup.add(line);
+  });
+}
+
+// 3D click selection (top-level only — children chosen from the tree)
+const raycaster = new THREE.Raycaster();
+const pointer = new THREE.Vector2();
+let downXY = null;
+renderer.domElement.addEventListener('pointerdown', e => downXY = [e.clientX, e.clientY]);
+renderer.domElement.addEventListener('pointerup', e => {
+  if (!downXY) return;
+  const moved = Math.hypot(e.clientX - downXY[0], e.clientY - downXY[1]);
+  downXY = null;
+  if (moved > 4 || transform.dragging) return;
+  const r = renderer.domElement.getBoundingClientRect();
+  pointer.x = ((e.clientX - r.left) / r.width) * 2 - 1;
+  pointer.y = -((e.clientY - r.top) / r.height) * 2 + 1;
+  raycaster.setFromCamera(pointer, camera);
+  const hits = raycaster.intersectObjects(display.children, false);
+  if (hits.length) { const n = findById(hits[0].object.userData.topId); if (n) selectNode(n, e.shiftKey); }
+  else if (!e.shiftKey) selectNode(null);
+});
+
+// ============================================================
+//  Add / duplicate / delete
+// ============================================================
+function addPrimitive(type) {
+  pushUndo();
+  const n = newPrimitive(type);
+  const g = buildGeometry(type, n.userData.params); g.computeBoundingBox();
+  n.position.y = -g.boundingBox.min.y; g.dispose();   // sit on the plate
+  model.add(n);
+  selectNode(n); requestRebuild();
+  return n;
+}
+document.querySelectorAll('[data-add]').forEach(btn => btn.onclick = () => addPrimitive(btn.dataset.add));
+
+function cloneNode(node) {
+  const c = new THREE.Object3D();
+  c.position.copy(node.position); c.rotation.copy(node.rotation); c.scale.copy(node.scale);
+  c.userData = { ...node.userData, params: node.userData.params ? { ...node.userData.params } : undefined, id: ++uid, name: node.userData.name + ' copy' };
+  childNodes(node).forEach(ch => c.add(cloneNode(ch)));
+  return c;
+}
+function duplicateSelected() {
+  const a = activeNode(); if (!a) return;
+  pushUndo();
+  const c = cloneNode(a);
+  c.position.add(new THREE.Vector3(10, 0, 10));
+  a.parent.add(c);
+  selectNode(c); requestRebuild();
+}
+function deleteSelected() {
+  if (!selected.length) return;
+  pushUndo();
+  selected.forEach(n => n.parent && n.parent.remove(n));
+  selectNode(null); requestRebuild();
+}
+// 一番上の親（modelの直下の図形）を返す
+function topAncestor(node) {
+  let n = node;
+  while (n && n.parent && n.parent !== model) n = n.parent;
+  return n && n.parent === model ? n : null;
+}
+// 選択物の底面(Y最小)をXZ平面(y=0 = テーブル面)に合わせる
+function dropToBed() {
+  const a = activeNode(); if (!a) return;
+  pushUndo();
+  const top = topAncestor(a); if (!top) return;
+  const mesh = display.children.find(m => m.userData.topId === top.userData.id);
+  if (!mesh || !mesh.geometry) { toast('置けません', true); return; }
+  mesh.geometry.computeBoundingBox();
+  const minY = mesh.geometry.boundingBox.min.y;   // geometry は world 座標で焼き込み済み
+  if (!isFinite(minY)) { toast('置けません', true); return; }
+  if (Math.abs(minY) < 1e-6) { toast('既にテーブル上にあります'); return; }
+  top.position.y -= minY;                          // 底面が y=0 に来るよう平行移動
+  syncPanelFromNode(activeNode());
+  requestRebuild();
+  toast('テーブルに置きました');
+}
+
+// ============================================================
+//  中空化（シェル）：選択した柱状の図形を、壁の厚みを残してくり抜く
+// ============================================================
+const HOLLOW_TYPES = new Set(['cylinder', 'taper', 'box', 'roundedprism']);
+// 内側にくり抜く図形（クローン）を作る。失敗時は null。
+function makeInner(node, wall, floor) {
+  const p = node.userData.params;
+  const inner = cloneNode(node);
+  inner.userData.name = '内側（くり抜き）';
+  const ip = inner.userData.params;
+  switch (node.userData.type) {
+    case 'cylinder': ip.r = p.r - wall; if (ip.r <= 0) return null; break;
+    case 'taper': ip.rt = p.rt - wall; ip.rb = p.rb - wall; if (ip.rt <= 0 || ip.rb <= 0) return null; break;
+    case 'box': ip.w = p.w - 2 * wall; ip.d = p.d - 2 * wall; if (ip.w <= 0 || ip.d <= 0) return null; break;
+    case 'roundedprism': ip.w = p.w - 2 * wall; ip.d = p.d - 2 * wall; ip.r = Math.max(0, p.r - wall);
+      if (ip.w <= 0 || ip.d <= 0) return null; break;
+    default: return null;
+  }
+  const over = 1;                       // 上面を確実に開けるための突き抜け量(mm)
+  ip.h = p.h - floor + over; if (ip.h <= 0) return null;
+  inner.position.y = node.position.y + (floor + over) / 2;   // 底をfloor残し、上面を開ける
+  return inner;
+}
+function hollowSelected() {
+  const a = activeNode();
+  if (!a || a.userData.kind !== 'primitive' || !HOLLOW_TYPES.has(a.userData.type)) {
+    toast('中空化できるのは 円柱・円錐台・直方体・角丸ボックス です', true); return;
+  }
+  const input = prompt('壁の厚み（mm）を入力してください\n（側面・底とも同じ厚みになります）', '2');
+  if (input === null) return;                       // キャンセル
+  const t = parseFloat(input);
+  if (!isFinite(t) || t <= 0) { toast('正しい数値（mmの正の数）を入力してください', true); return; }
+  const inner = makeInner(a, t, t);                 // 壁=底=t
+  if (!inner) { toast('壁が厚すぎます。もっと薄くしてください', true); return; }
+  pushUndo();
+  const parent = a.parent;
+  const g = newGroup('subtract');
+  g.userData.color = a.userData.color;
+  parent.add(g);
+  g.add(a);          // 外側（ベース）
+  g.add(inner);      // 内側を引く
+  selectNode(inner);
+  requestRebuild();
+  toast(`中空化しました（壁${round(t)}mm）。内側を選べば厚みや深さを微調整できます`);
+}
+
+// ============================================================
+//  Boolean: combine two selected siblings into a group node
+// ============================================================
+function canCombine() { return selected.length === 2 && selected[0].parent === selected[1].parent; }
+function combine(op) {
+  if (!canCombine()) return;
+  pushUndo();
+  const [a, b] = selected;
+  const parent = a.parent;
+  const g = newGroup(op);
+  g.userData.color = a.userData.color;
+  parent.add(g);          // group sits at parent's origin (identity) → children keep world transform
+  g.add(a); g.add(b);
+  selectNode(g); requestRebuild();
+  toast(opLabel[op] + 'しました（中の図形は個別に編集できます）');
+}
+document.getElementById('opUnion').onclick = () => combine('union');
+document.getElementById('opSubtract').onclick = () => combine('subtract');
+document.getElementById('opIntersect').onclick = () => combine('intersect');
+function updateBoolButtons() {
+  const ok = canCombine();
+  ['opUnion', 'opSubtract', 'opIntersect'].forEach(id => document.getElementById(id).disabled = !ok);
+}
+
+function ungroupSelected() {
+  const a = activeNode(); if (!a || a.userData.kind !== 'group') return;
+  pushUndo();
+  const parent = a.parent;
+  childNodes(a).forEach(ch => parent.add(ch));   // children keep world transform (group is identity)
+  parent.remove(a);
+  selectNode(null); requestRebuild();
+}
+
+// ============================================================
+//  Tree UI
+// ============================================================
+const treeEl = document.getElementById('tree');
+function renderTree() {
+  treeEl.innerHTML = '';
+  const tops = childNodes(model);
+  if (!tops.length) { treeEl.innerHTML = '<li class="empty">図形がありません。左上から追加してください。</li>'; return; }
+  tops.forEach(n => renderNode(n, 0));
+}
+function renderNode(node, depth) {
+  const li = document.createElement('li');
+  const row = document.createElement('div');
+  row.className = 'node-row' + (selected.includes(node) ? (node === activeNode() ? ' sel active' : ' sel') : '');
+  row.style.paddingLeft = (8 + depth * 16) + 'px';
+
+  const isGroup = node.userData.kind === 'group';
+  const twist = document.createElement('span'); twist.className = 'twist';
+  twist.textContent = isGroup ? (node.userData.expanded ? '▼' : '▶') : '';
+  if (isGroup) twist.onclick = e => { e.stopPropagation(); node.userData.expanded = !node.userData.expanded; renderTree(); };
+
+  const sw = document.createElement('span'); sw.className = 'swatch';
+  sw.style.background = '#' + new THREE.Color(node.userData.color).getHexString();
+  const nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = node.userData.name;
+
+  row.append(twist, sw, nm);
+  if (isGroup) { const b = document.createElement('span'); b.className = 'badge'; b.textContent = opLabel[node.userData.op]; row.append(b); }
+  row.onclick = e => selectNode(node, e.shiftKey);
+
+  li.appendChild(row);
+  treeEl.appendChild(li);
+  if (isGroup && node.userData.expanded) childNodes(node).forEach(ch => renderNode(ch, depth + 1));
+}
+
+// ============================================================
+//  Properties panel
+// ============================================================
+const $ = id => document.getElementById(id);
+const propPanel = $('propPanel'), propEmpty = $('propEmpty');
+const round = v => Math.round(v * 100) / 100;
+
+function refreshProps() {
+  const m = activeNode();
+  if (!m) { propPanel.style.display = 'none'; propEmpty.style.display = ''; return; }
+  propPanel.style.display = ''; propEmpty.style.display = 'none';
+  const isGroup = m.userData.kind === 'group';
+
+  $('pName').value = m.userData.name;
+  // 図形は実寸(幅/高さ/奥行など)で大きさを指定するので、まぎらわしい「拡縮(倍率)」欄は隠す
+  $('scaleRow').style.display = m.userData.kind === 'primitive' ? 'none' : '';
+  $('opWrap').style.display = isGroup ? '' : 'none';
+  $('ungroupBtn').style.display = isGroup ? '' : 'none';
+  $('hollowBtn').style.display = (m.userData.kind === 'primitive' && HOLLOW_TYPES.has(m.userData.type)) ? '' : 'none';
+  if (isGroup) {
+    ['union','subtract','intersect'].forEach(op => $('set' + op[0].toUpperCase() + op.slice(1)).classList.toggle('active', m.userData.op === op));
+    $('opHint').textContent = m.userData.op === 'subtract' ? '最初の図形から、残りの図形を引きます。' : m.userData.op === 'intersect' ? '図形が重なっている部分だけ残します。' : 'すべての図形を1つにつなげます。';
+  }
+
+  // color only meaningful on the top-level node (it colors the baked mesh)
+  $('colorSection').style.display = isTopLevel(m) ? '' : 'none';
+  $('pColor').value = '#' + new THREE.Color(m.userData.color).getHexString();
+
+  // dimensions (primitive only)
+  const dimSection = $('dimSection'), wrap = $('dimWrap'); wrap.innerHTML = '';
+  const dimList = m.userData.kind === 'primitive' ? dimDefs[m.userData.type]
+                : m.userData.kind === 'svg' ? svgDimDefs : null;
+  if (!dimList) { dimSection.style.display = 'none'; }
+  else {
+    dimSection.style.display = '';
+    dimList.forEach(([key, label]) => {
+      const row = document.createElement('div'); row.className = 'row';
+      const lab = document.createElement('label'); lab.textContent = label;
+      if (key === 'text') {
+        const inp = document.createElement('input'); inp.type = 'text'; inp.value = m.userData.params.text || '';
+        inp.addEventListener('focus', () => pushUndo());
+        inp.oninput = () => { m.userData.params.text = inp.value; requestRebuild(); };
+        row.append(lab, inp);
+      } else {
+        // 円形の値は内部では半径だが、入力欄では直径(×2)で表示する
+        const dia = (diaKeys[m.userData.type] || []).includes(key);
+        const fine = (key === 'wall' || key === 'fillet');
+        const inp = document.createElement('input'); inp.type = 'number';
+        inp.step = fine ? 0.1 : 1;
+        if (fine) inp.min = 0;
+        inp.value = dia ? round(m.userData.params[key] * 2) : m.userData.params[key];
+        inp.addEventListener('focus', () => pushUndo());
+        inp.oninput = () => {
+          const v = parseFloat(inp.value); if (isNaN(v)) return;
+          const val = dia ? v / 2 : v;
+          m.userData.params[key] = key === 'seg' ? Math.max(3, Math.round(val)) : val;
+          requestRebuild();
+        };
+        row.append(lab, inp);
+      }
+      wrap.appendChild(row);
+    });
+  }
+  syncPanelFromNode(m);
+}
+
+function syncPanelFromNode(m) {
+  $('px').value = round(m.position.x); $('py').value = round(m.position.y); $('pz').value = round(m.position.z);
+  $('rx').value = round(THREE.MathUtils.radToDeg(m.rotation.x));
+  $('ry').value = round(THREE.MathUtils.radToDeg(m.rotation.y));
+  $('rz').value = round(THREE.MathUtils.radToDeg(m.rotation.z));
+  $('sx').value = round(m.scale.x); $('sy').value = round(m.scale.y); $('sz').value = round(m.scale.z);
+}
+
+// 図形(プリミティブ)の拡縮(倍率)を実寸(幅・高さ・奥行など)に焼き込み、倍率を1に戻す。
+// → 数値が常に「実寸ひとつ」になり、倍率と実寸が食い違わない。寸法を持たない種類(mesh/svg/group)はそのまま。
+function bakeScale(node) {
+  if (!node || node.userData.kind !== 'primitive') return false;
+  const s = node.scale;
+  if (Math.abs(s.x - 1) < 1e-4 && Math.abs(s.y - 1) < 1e-4 && Math.abs(s.z - 1) < 1e-4) return false;
+  const p = node.userData.params, t = node.userData.type;
+  const rxz = (s.x + s.z) / 2;            // 円形断面はXZの平均で1つの半径に
+  const all = (s.x + s.y + s.z) / 3;
+  const mul = (k, f) => { if (p[k] != null) p[k] = Math.round(p[k] * f * 100) / 100; };
+  if (t === 'box') { mul('w', s.x); mul('h', s.y); mul('d', s.z); mul('fillet', Math.min(s.x, s.y, s.z)); }
+  else if (t === 'roundedprism') { mul('w', s.x); mul('h', s.y); mul('d', s.z); mul('r', Math.min(s.x, s.z)); }
+  else if (t === 'cylinder') { mul('r', rxz); mul('h', s.y); }
+  else if (t === 'taper') { mul('rt', rxz); mul('rb', rxz); mul('h', s.y); }
+  else if (t === 'cone') { mul('r', rxz); mul('h', s.y); }
+  else if (t === 'pyramid') { mul('r', rxz); mul('h', s.y); }
+  else if (t === 'sphere') { mul('r', all); }
+  else if (t === 'torus') { mul('r', rxz); mul('t', all); }
+  else if (t === 'text') { mul('size', (s.x + s.y) / 2); mul('depth', s.z); }
+  node.scale.set(1, 1, 1);
+  return true;
+}
+
+(function bindInputs() {
+  const undoOnFocus = el => el.addEventListener('focus', () => pushUndo());
+  const map = [
+    ['px', (m,v)=>m.position.x=v], ['py', (m,v)=>m.position.y=v], ['pz', (m,v)=>m.position.z=v],
+    ['rx', (m,v)=>m.rotation.x=THREE.MathUtils.degToRad(v)], ['ry', (m,v)=>m.rotation.y=THREE.MathUtils.degToRad(v)], ['rz', (m,v)=>m.rotation.z=THREE.MathUtils.degToRad(v)],
+    ['sx', (m,v)=>m.scale.x=v||0.001], ['sy', (m,v)=>m.scale.y=v||0.001], ['sz', (m,v)=>m.scale.z=v||0.001],
+  ];
+  map.forEach(([id, fn]) => {
+    undoOnFocus($(id));
+    $(id).oninput = () => {
+      const m = activeNode(); if (!m) return;
+      const v = parseFloat($(id).value); if (isNaN(v)) return;
+      fn(m, v); requestRebuild();
+    };
+  });
+  undoOnFocus($('pName'));
+  $('pName').oninput = () => { const m = activeNode(); if (m) { m.userData.name = $('pName').value; renderTree(); } };
+  $('pColor').oninput = () => { pushUndo(); const m = activeNode(); if (m) { m.userData.color = new THREE.Color($('pColor').value).getHex(); renderTree(); requestRebuild(); } };
+  document.querySelectorAll('#opWrap [data-op]').forEach(b => b.onclick = () => {
+    const m = activeNode(); if (!m || m.userData.kind !== 'group') return;
+    pushUndo(); m.userData.op = b.dataset.op; refreshProps(); renderTree(); requestRebuild();
+  });
+  $('undoBtn').onclick = undo;
+  $('redoBtn').onclick = redo;
+  $('dupBtn').onclick = duplicateSelected;
+  $('delBtn').onclick = deleteSelected;
+  $('dropBtn').onclick = dropToBed;
+  $('hollowBtn').onclick = hollowSelected;
+  $('ungroupBtn').onclick = ungroupSelected;
+})();
+
+// ============================================================
+//  Transform modes, snapping, keyboard
+// ============================================================
+const modeBtns = { translate: $('modeTranslate'), rotate: $('modeRotate'), scale: $('modeScale') };
+function setMode(mode) { transform.setMode(mode); for (const k in modeBtns) modeBtns[k].classList.toggle('active', k === mode); }
+modeBtns.translate.onclick = () => setMode('translate');
+modeBtns.rotate.onclick = () => setMode('rotate');
+modeBtns.scale.onclick = () => setMode('scale');
+
+let snapOn = false;
+function applySnap() {
+  const s = parseFloat($('snapSize').value);
+  const a = parseFloat($('snapAngle').value);
+  transform.setTranslationSnap(snapOn ? s : null);
+  transform.setRotationSnap(snapOn ? THREE.MathUtils.degToRad(a) : null);
+  transform.setScaleSnap(snapOn ? 0.25 : null);
+}
+$('snapBtn').onclick = () => {
+  snapOn = !snapOn;
+  $('snapBtn').textContent = snapOn ? '入' : '切';
+  $('snapBtn').classList.toggle('active', snapOn);
+  applySnap();
+};
+$('snapSize').onchange = applySnap;
+$('snapAngle').onchange = applySnap;
+
+window.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); return; }
+  if (e.target.tagName === 'INPUT') return;
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'd') { e.preventDefault(); duplicateSelected(); return; }
+  if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteSelected(); return; }
+  if (e.key === 'w' || e.key === 'W') setMode('translate');
+  if (e.key === 'e' || e.key === 'E') setMode('rotate');
+  if (e.key === 'r' || e.key === 'R') setMode('scale');
+  if (e.key === 'Escape') selectNode(null);
+});
+
+// ============================================================
+//  STL export
+// ============================================================
+const exporter = new STLExporter();
+$('exportBtn').onclick = async () => {
+  if (!display.children.length) { toast('書き出す図形がありません', true); return; }
+  const data = exporter.parse(display, { binary: true });
+  const blob = new Blob([data], { type: 'application/octet-stream' });
+  const saved = await saveBlob(blob, 'model.stl', { description: 'STL 3Dモデル', accept: { 'model/stl': ['.stl'] } });
+  if (saved) toast(saved + ' を書き出しました');
+};
+
+// ============================================================
+//  Save / Load (JSON, parametric tree)
+// ============================================================
+function serialize(node) {
+  const u = node.userData;
+  const o = { kind: u.kind, name: u.name, color: u.color, expanded: u.expanded,
+    pos: node.position.toArray(), rot: [node.rotation.x, node.rotation.y, node.rotation.z], scale: node.scale.toArray() };
+  if (u.kind === 'primitive') { o.type = u.type; o.params = { ...u.params }; }
+  else if (u.kind === 'svg') { o.svg = u.svg; o.params = { ...u.params }; }
+  else if (u.kind === 'mesh') {
+    const g = u.geometry;
+    o.geom = { pos: Array.from(g.attributes.position.array), idx: g.index ? Array.from(g.index.array) : null };
+  }
+  else { o.op = u.op; o.children = childNodes(node).map(serialize); }
+  return o;
+}
+function deserialize(o) {
+  const n = new THREE.Object3D();
+  n.position.fromArray(o.pos); n.rotation.set(...o.rot); n.scale.fromArray(o.scale);
+  n.userData = { kind: o.kind, name: o.name, color: o.color, id: ++uid, expanded: o.expanded !== false };
+  if (o.kind === 'primitive') { n.userData.type = o.type; n.userData.params = { ...o.params }; }
+  else if (o.kind === 'svg') { n.userData.svg = o.svg; n.userData.params = { ...o.params }; }
+  else if (o.kind === 'mesh') {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(o.geom.pos, 3));
+    if (o.geom.idx) g.setIndex(o.geom.idx);
+    g.computeVertexNormals(); g.computeBoundingBox();
+    n.userData.geometry = g;
+  }
+  else { n.userData.op = o.op; (o.children || []).forEach(c => n.add(deserialize(c))); }
+  return n;
+}
+$('importStlBtn').onclick = () => $('stlInput').click();
+$('stlInput').onchange = e => {
+  const f = e.target.files[0]; if (!f) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      pushUndo();
+      const geo = new STLLoader().parse(reader.result);
+      geo.computeBoundingBox();
+      const ctr = new THREE.Vector3(); geo.boundingBox.getCenter(ctr);
+      geo.translate(-ctr.x, -ctr.y, -ctr.z);   // recenter at origin
+      geo.computeBoundingBox(); geo.computeVertexNormals();
+      const node = newMesh(geo, f.name.replace(/\.stl$/i, '') || 'STL');
+      node.position.y = -geo.boundingBox.min.y; // sit on the plate
+      model.add(node);
+      selectNode(node); requestRebuild();
+      toast('STLを読み込みました');
+    } catch (err) { console.error(err); toast('STLの読み込みに失敗しました', true); }
+  };
+  reader.readAsArrayBuffer(f); e.target.value = '';
+};
+
+// ---- SVG import ----
+$('importSvgBtn').onclick = () => $('svgInput').click();
+$('svgInput').onchange = e => {
+  const f = e.target.files[0]; if (!f) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      pushUndo();
+      const node = newSvg(reader.result, f.name.replace(/\.svg$/i, '') || 'SVG', 4);
+      if (!svgShapeCount(node.userData.svg)) throw new Error('SVGに図形が見つかりません');
+      model.add(node); selectNode(node); requestRebuild();
+      toast('SVGを読み込みました');
+    } catch (err) { console.error(err); toast('SVGの読み込みに失敗しました', true); }
+  };
+  reader.readAsText(f); e.target.value = '';
+};
+
+// ---- Bitmap → vector trace dialog ----
+const traceModal = $('traceModal'), tracePreview = $('tracePreview');
+let srcData = null;
+$('traceBtn').onclick = () => $('imgInput').click();
+$('imgInput').onchange = e => {
+  const f = e.target.files[0]; if (!f) return;
+  const url = URL.createObjectURL(f);
+  const img = new Image();
+  img.onload = () => {
+    URL.revokeObjectURL(url);
+    const maxDim = 500, sc = Math.min(1, maxDim / Math.max(img.width, img.height));
+    const w = Math.max(1, Math.round(img.width * sc)), h = Math.max(1, Math.round(img.height * sc));
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    const cx = c.getContext('2d', { willReadFrequently: true });
+    cx.fillStyle = '#ffffff'; cx.fillRect(0, 0, w, h);   // transparent bg → white (not treated as a shape)
+    cx.drawImage(img, 0, 0, w, h);
+    srcData = cx.getImageData(0, 0, w, h);
+    updateTracePreview();
+    traceModal.style.display = 'flex';
+  };
+  img.onerror = () => toast('画像を読み込めませんでした', true);
+  img.src = url; e.target.value = '';
+};
+function binarizeTo(canvas) {
+  const th = parseInt($('thRange').value), invert = $('thInvert').checked;
+  const w = srcData.width, h = srcData.height;
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  const out = ctx.createImageData(w, h), sd = srcData.data, od = out.data;
+  for (let i = 0; i < sd.length; i += 4) {
+    const lum = 0.2126 * sd[i] + 0.7153 * sd[i + 1] + 0.0721 * sd[i + 2];
+    let shape = lum < th; if (invert) shape = !shape;
+    const v = shape ? 0 : 255;
+    od[i] = od[i + 1] = od[i + 2] = v; od[i + 3] = 255;
+  }
+  ctx.putImageData(out, 0, 0);
+}
+function updateTracePreview() {
+  $('thVal').textContent = $('thRange').value;
+  $('tsVal').textContent = $('tsRange').value;
+  $('depVal').textContent = $('depRange').value;
+  if (srcData) binarizeTo(tracePreview);
+}
+['thRange', 'tsRange', 'depRange'].forEach(id => $(id).oninput = updateTracePreview);
+$('thInvert').onchange = updateTracePreview;
+$('traceCancel').onclick = () => { traceModal.style.display = 'none'; srcData = null; };
+$('traceGo').onclick = () => {
+  if (!srcData) return;
+  const tmp = document.createElement('canvas'); binarizeTo(tmp);
+  const url = tmp.toDataURL('image/png');
+  const noise = parseInt($('tsRange').value), depth = parseInt($('depRange').value);
+  try {
+    Potrace.setParameter({ turdsize: noise, optcurve: true, alphamax: 1, opttolerance: 0.2, turnpolicy: 'minority' });
+    Potrace.loadImageFromUrl(url);
+    Potrace.process(() => {
+      try {
+        const svg = Potrace.getSVG(1);
+        const node = newSvg(svg, '画像', depth);
+        if (!svgShapeCount(node.userData.svg)) throw new Error('トレース結果が空です');
+        pushUndo();
+        model.add(node); selectNode(node); requestRebuild();
+        toast('トレースして3D化しました');
+      } catch (err) { console.error(err); toast('3D化に失敗しました（しきい値を調整してみてください）', true); }
+      traceModal.style.display = 'none'; srcData = null;
+    });
+  } catch (err) { console.error(err); toast('トレースに失敗しました', true); }
+};
+
+$('saveBtn').onclick = () => {
+  const data = { v: 2, model: childNodes(model).map(serialize) };
+  download(new Blob([JSON.stringify(data)], { type: 'application/json' }), 'design.json');
+};
+$('loadBtn').onclick = () => $('fileInput').click();
+$('fileInput').onchange = e => {
+  const f = e.target.files[0]; if (!f) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      pushUndo();
+      const data = JSON.parse(reader.result);
+      clearGroup(model); uid = 0; counter = 0; selectNode(null);
+      (data.model || []).forEach(o => model.add(deserialize(o)));
+      counter = uid;
+      renderTree(); requestRebuild(); toast('読み込みました');
+    } catch (err) { console.error(err); toast('読み込みに失敗しました', true); }
+  };
+  reader.readAsText(f); e.target.value = '';
+};
+
+function download(blob, name) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+// 保存名・場所を選ぶダイアログを出して保存する。
+// 対応ブラウザ(Chrome等)は OS のネイティブ保存ダイアログ、非対応はファイル名入力で代替。
+// 戻り値: 保存したファイル名（キャンセル時は null）
+async function saveBlob(blob, suggestedName, fileType) {
+  if (window.showSaveFilePicker) {
+    try {
+      const handle = await window.showSaveFilePicker({
+        suggestedName,
+        types: fileType ? [fileType] : undefined,
+      });
+      const w = await handle.createWritable();
+      await w.write(blob);
+      await w.close();
+      return handle.name;
+    } catch (e) {
+      if (e.name === 'AbortError') return null;   // ユーザーがキャンセル
+      // それ以外のエラーは従来のダウンロードにフォールバック
+    }
+  }
+  let name = prompt('保存するファイル名を入力してください', suggestedName);
+  if (name === null) return null;                 // キャンセル
+  name = name.trim() || suggestedName;
+  download(blob, name);
+  return name;
+}
+
+// ============================================================
+//  Toast
+// ============================================================
+let toastTimer;
+function toast(msg, isErr) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.style.borderColor = isErr ? 'var(--danger)' : 'var(--accent)';
+  t.style.background = isErr ? '#45302f' : '#2b3a52';
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 2400);
+}
+
+// ============================================================
+//  Resize & render loop
+// ============================================================
+function resize() {
+  const w = viewport.clientWidth, h = viewport.clientHeight;
+  if (!w || !h) return;
+  renderer.setSize(w, h);
+  camera.aspect = w / h; camera.updateProjectionMatrix();
+}
+new ResizeObserver(resize).observe(viewport);
+resize();
+
+const statsEl = $('stats');
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+  statsEl.textContent = `図形: ${display.children.length}　選択: ${selected.length}　単位: mm`;
+}
+
+// ---- start ----
+renderTree();
+animate();
+</script>
+</body>
+</html>
