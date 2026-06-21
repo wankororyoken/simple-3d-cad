@@ -138,11 +138,32 @@
     </div>
     <div class="section">
       <h2>図形を組み合わせる</h2>
-      <div class="muted" style="margin-bottom:8px">同じ階層の図形を2つ選んで実行（<kbd>Shift</kbd>+クリックで2つ目）。組み合わせ後も中の図形は個別に編集できます。</div>
+      <div class="muted" style="margin-bottom:8px">同じ階層の図形を2つ以上選んで実行（<kbd>Shift</kbd>+クリックで追加）。組み合わせ後も中の図形は個別に編集できます。</div>
       <div class="grid3">
         <button id="opUnion" disabled>合体 ∪</button>
         <button id="opSubtract" disabled>くり抜き −</button>
         <button id="opIntersect" disabled>共通 ∩</button>
+      </div>
+    </div>
+    <div class="section">
+      <h2>整列・グループ</h2>
+      <div class="muted" style="margin-bottom:8px">複数の図形を選んで使います（<kbd>Shift</kbd>+クリックで追加選択）。</div>
+      <button id="groupBtn" disabled style="width:100%; margin-bottom:8px">▣ グループ化（まとめる）<kbd>Ctrl+G</kbd></button>
+      <div class="muted" style="margin:4px 0 3px">左右 X</div>
+      <div class="grid3">
+        <button data-align="x:min" disabled>左揃え</button><button data-align="x:center" disabled>中央</button><button data-align="x:max" disabled>右揃え</button>
+      </div>
+      <div class="muted" style="margin:6px 0 3px">上下 Y</div>
+      <div class="grid3">
+        <button data-align="y:min" disabled>下揃え</button><button data-align="y:center" disabled>中央</button><button data-align="y:max" disabled>上揃え</button>
+      </div>
+      <div class="muted" style="margin:6px 0 3px">奥行 Z</div>
+      <div class="grid3">
+        <button data-align="z:min" disabled>手前</button><button data-align="z:center" disabled>中央</button><button data-align="z:max" disabled>奥</button>
+      </div>
+      <div class="muted" style="margin:6px 0 3px">等間隔に並べる（3つ以上）</div>
+      <div class="grid3">
+        <button data-dist="x" disabled>X方向</button><button data-dist="y" disabled>Y方向</button><button data-dist="z" disabled>Z方向</button>
       </div>
     </div>
     <div class="section">
@@ -207,6 +228,13 @@
       <div id="colorSection">
         <div class="divider"></div>
         <div class="row"><label>色</label><input type="color" id="pColor" /></div>
+      </div>
+      <div id="opacitySection">
+        <div class="row" style="margin-top:6px">
+          <label for="pOpacity">透明度</label>
+          <input id="pOpacity" type="range" min="10" max="100" step="5" value="100" style="flex:1; min-width:0;">
+          <span id="pOpacityVal" class="muted" style="width:40px; text-align:right; font-size:12px; flex-shrink:0;">100%</span>
+        </div>
       </div>
       <div class="grid2" style="margin-top:10px">
         <button id="dupBtn">複製</button>
@@ -415,7 +443,7 @@ let uid = 0, counter = 0;
 const palette = [0x4f9cff, 0xef8c5b, 0x5bd6a0, 0xc98cff, 0xf0d35b, 0xff7aa8];
 const labels = { box:'直方体', roundedprism:'角丸ボックス', cylinder:'円柱', taper:'円錐台', sphere:'球', cone:'円錐', pyramid:'四角錐', torus:'トーラス', text:'文字', group:'結合形状' };
 const svgDimDefs = [['depth','厚み mm'],['size','大きさ mm'],['wall','線の太さ mm(0=塗り)']];
-const opLabel = { union:'合体', subtract:'くり抜き', intersect:'共通部分' };
+const opLabel = { union:'合体', subtract:'くり抜き', intersect:'共通部分', none:'グループ' };
 
 const defaults = {
   box:      { w: 30, h: 30, d: 30, fillet: 0 },
@@ -614,7 +642,8 @@ function newPrimitive(type) {
 }
 function newGroup(op) {
   const n = new THREE.Object3D();
-  n.userData = { kind: 'group', op, color: palette[counter % palette.length], name: labels.group + ' ' + (++counter), id: ++uid, expanded: true };
+  const base = op === 'none' ? 'グループ' : labels.group;
+  n.userData = { kind: 'group', op, color: palette[counter % palette.length], name: base + ' ' + (++counter), id: ++uid, expanded: true };
   return n;
 }
 function newMesh(geometry, baseName) {
@@ -624,6 +653,18 @@ function newMesh(geometry, baseName) {
 }
 const childNodes = node => node.children.filter(c => c.userData && c.userData.kind);
 const isTopLevel = node => node.parent === model;
+// 非破壊グループ（op:'none'）＝形を融合せず、まとめて動かすだけの入れ物
+const isPlainGroup = node => node.userData.kind === 'group' && node.userData.op === 'none';
+// 「自分自身が1つのメッシュとして描かれる単位」か？
+// （= 非破壊グループそのものではなく、祖先をたどると model まで非破壊グループだけを通る）
+function isRenderUnit(node) {
+  if (isPlainGroup(node)) return false;
+  let p = node.parent;
+  while (p && p !== model) { if (!isPlainGroup(p)) return false; p = p.parent; }
+  return p === model;
+}
+// 選択がすべて同じ階層（親）にあるか
+const sameParent = () => selected.length >= 2 && selected.every(n => n.parent === selected[0].parent);
 function findById(id, root = model) {
   for (const c of childNodes(root)) { if (c.userData.id === id) return c; const f = findById(id, c); if (f) return f; }
   return null;
@@ -787,24 +828,34 @@ function clearGroup(g) {
   }
 }
 
+// 図形の本体マテリアル（透明度に対応）
+function bodyMaterial(node) {
+  const op = node.userData.opacity == null ? 1 : node.userData.opacity;
+  const mat = new THREE.MeshStandardMaterial({ color: node.userData.color, roughness: 0.55, metalness: 0.05 });
+  if (op < 1) { mat.transparent = true; mat.opacity = op; mat.depthWrite = false; }
+  return mat;
+}
+// 1つの描画単位をメッシュ化する。非破壊グループは中身を個別に描く（色・透明度を保つ）。
+function buildDisplay(node, topId) {
+  if (isPlainGroup(node)) { childNodes(node).forEach(ch => buildDisplay(ch, topId)); return; }
+  const geom = evalGeometry(node);
+  if (!geom) return;
+  const mesh = new THREE.Mesh(geom, bodyMaterial(node));
+  mesh.castShadow = mesh.receiveShadow = true;
+  mesh.userData.topId = topId;
+  display.add(mesh);
+  // 形の境目に輪郭線を描く（平らな面でも形が分かるように）。30°以上の角だけ線にする
+  const edges = new THREE.LineSegments(
+    new THREE.EdgesGeometry(geom, 30),
+    new THREE.LineBasicMaterial({ color: 0x101216, transparent: true, opacity: 0.5 })
+  );
+  edges.userData.topId = topId;
+  edgeGroup.add(edges);
+}
 function doRebuild() {
   clearGroup(display);
   clearGroup(edgeGroup);
-  for (const node of childNodes(model)) {
-    const geom = evalGeometry(node);
-    if (!geom) continue;
-    const mesh = new THREE.Mesh(geom, new THREE.MeshStandardMaterial({ color: node.userData.color, roughness: 0.55, metalness: 0.05 }));
-    mesh.castShadow = mesh.receiveShadow = true;
-    mesh.userData.topId = node.userData.id;
-    display.add(mesh);
-    // 形の境目に輪郭線を描く（平らな面でも形が分かるように）。30°以上の角だけ線にする
-    const edges = new THREE.LineSegments(
-      new THREE.EdgesGeometry(geom, 30),
-      new THREE.LineBasicMaterial({ color: 0x101216, transparent: true, opacity: 0.5 })
-    );
-    edges.userData.topId = node.userData.id;
-    edgeGroup.add(edges);
-  }
+  for (const node of childNodes(model)) buildDisplay(node, node.userData.id);
   updateHighlight();
   updateMeasure();
 }
@@ -881,14 +932,14 @@ document.getElementById('wallmm').addEventListener('input', updateMeasure);
 // ============================================================
 //  Selection & highlight
 // ============================================================
-let selected = [];                       // CADNodes, up to 2
+let selected = [];                       // 選択中の CADNode（複数可）
 const activeNode = () => selected[selected.length - 1] || null;
 
 function selectNode(node, additive = false) {
   if (!node) selected = [];
   else if (additive) {
     if (selected.includes(node)) selected = selected.filter(n => n !== node);
-    else selected = [...selected, node].slice(-2);
+    else selected = [...selected, node];
   } else selected = [node];
 
   const a = activeNode();
@@ -974,10 +1025,11 @@ function dropToBed() {
   const a = activeNode(); if (!a) return;
   pushUndo();
   const top = topAncestor(a); if (!top) return;
-  const mesh = display.children.find(m => m.userData.topId === top.userData.id);
-  if (!mesh || !mesh.geometry) { toast('置けません', true); return; }
-  mesh.geometry.computeBoundingBox();
-  const minY = mesh.geometry.boundingBox.min.y;   // geometry は world 座標で焼き込み済み
+  const meshes = display.children.filter(m => m.userData.topId === top.userData.id);
+  if (!meshes.length) { toast('置けません', true); return; }
+  const box = new THREE.Box3();
+  meshes.forEach(m => { m.geometry.computeBoundingBox(); box.union(m.geometry.boundingBox); });
+  const minY = box.min.y;   // geometry は world 座標で焼き込み済み
   if (!isFinite(minY)) { toast('置けません', true); return; }
   if (Math.abs(minY) < 1e-6) { toast('既にテーブル上にあります'); return; }
   top.position.y -= minY;                          // 底面が y=0 に来るよう平行移動
@@ -1035,25 +1087,42 @@ function hollowSelected() {
 // ============================================================
 //  Boolean: combine two selected siblings into a group node
 // ============================================================
-function canCombine() { return selected.length === 2 && selected[0].parent === selected[1].parent; }
+function canCombine() { return sameParent(); }
+// 選択した複数の図形を1つのグループ(node)にまとめる。op='none' なら非破壊グループ。
+function wrapSelected(op) {
+  if (!sameParent()) return null;
+  const nodes = selected.slice();           // クリック順を保持（くり抜きは先頭から引く）
+  const parent = nodes[0].parent;
+  const g = newGroup(op);
+  g.userData.color = nodes[0].userData.color;
+  parent.add(g);          // group sits at parent's origin (identity) → children keep world transform
+  nodes.forEach(n => g.add(n));
+  return g;
+}
 function combine(op) {
   if (!canCombine()) return;
   pushUndo();
-  const [a, b] = selected;
-  const parent = a.parent;
-  const g = newGroup(op);
-  g.userData.color = a.userData.color;
-  parent.add(g);          // group sits at parent's origin (identity) → children keep world transform
-  g.add(a); g.add(b);
+  const g = wrapSelected(op);
   selectNode(g); requestRebuild();
   toast(opLabel[op] + 'しました（中の図形は個別に編集できます）');
+}
+function groupSelected() {
+  if (!sameParent()) { toast('同じ階層の図形を2つ以上選んでください', true); return; }
+  pushUndo();
+  const g = wrapSelected('none');
+  selectNode(g); requestRebuild();
+  toast('グループ化しました（まとめて移動できます）');
 }
 document.getElementById('opUnion').onclick = () => combine('union');
 document.getElementById('opSubtract').onclick = () => combine('subtract');
 document.getElementById('opIntersect').onclick = () => combine('intersect');
 function updateBoolButtons() {
-  const ok = canCombine();
-  ['opUnion', 'opSubtract', 'opIntersect'].forEach(id => document.getElementById(id).disabled = !ok);
+  const sib = sameParent();
+  const multi = selected.length >= 2;
+  ['opUnion', 'opSubtract', 'opIntersect'].forEach(id => document.getElementById(id).disabled = !sib);
+  document.getElementById('groupBtn').disabled = !sib;
+  document.querySelectorAll('[data-align]').forEach(b => b.disabled = !multi);
+  document.querySelectorAll('[data-dist]').forEach(b => b.disabled = selected.length < 3);
 }
 
 function ungroupSelected() {
@@ -1063,6 +1132,59 @@ function ungroupSelected() {
   childNodes(a).forEach(ch => parent.add(ch));   // children keep world transform (group is identity)
   parent.remove(a);
   selectNode(null); requestRebuild();
+}
+
+// ============================================================
+//  整列・均等配置・微調整（複数選択に作用）
+// ============================================================
+// ノードの world 座標での外接ボックス（geometry は world 焼き込み済み）
+function nodeWorldBox(node) {
+  const g = evalGeometry(node); if (!g) return null;
+  if (!g.boundingBox) g.computeBoundingBox();
+  const b = g.boundingBox.clone(); g.dispose(); return b;
+}
+// 選択物を軸(axis)方向に揃える。mode = 'min' | 'center' | 'max'
+// ※ 親が回転していない前提（model 直下や水平なグループ）で、world と親軸が一致するケース向け
+function alignSelected(axis, mode) {
+  if (selected.length < 2) { toast('2つ以上選んでください', true); return; }
+  const boxes = selected.map(nodeWorldBox);
+  if (boxes.some(b => !b)) { toast('整列できませんでした', true); return; }
+  const overall = new THREE.Box3(); boxes.forEach(b => overall.union(b));
+  const target = mode === 'min' ? overall.min[axis] : mode === 'max' ? overall.max[axis] : (overall.min[axis] + overall.max[axis]) / 2;
+  pushUndo();
+  selected.forEach((n, i) => {
+    const b = boxes[i];
+    const cur = mode === 'min' ? b.min[axis] : mode === 'max' ? b.max[axis] : (b.min[axis] + b.max[axis]) / 2;
+    n.position[axis] += target - cur;
+  });
+  syncPanelFromNode(activeNode()); requestRebuild();
+}
+// 選択物を軸(axis)方向に等間隔（すき間を均等）に並べる。両端は固定。
+function distributeSelected(axis) {
+  if (selected.length < 3) { toast('3つ以上選んでください', true); return; }
+  const items = selected.map(n => ({ n, b: nodeWorldBox(n) }));
+  if (items.some(it => !it.b)) { toast('できませんでした', true); return; }
+  items.sort((a, b) => a.b.min[axis] - b.b.min[axis]);
+  const span = items[items.length - 1].b.max[axis] - items[0].b.min[axis];
+  let sizeSum = 0; items.forEach(it => sizeSum += it.b.max[axis] - it.b.min[axis]);
+  const gap = (span - sizeSum) / (items.length - 1);
+  pushUndo();
+  let cursor = items[0].b.min[axis];
+  items.forEach(it => {
+    const size = it.b.max[axis] - it.b.min[axis];
+    it.n.position[axis] += cursor - it.b.min[axis];
+    cursor += size + gap;
+  });
+  syncPanelFromNode(activeNode()); requestRebuild();
+}
+document.querySelectorAll('[data-align]').forEach(b => b.onclick = () => { const [ax, mode] = b.dataset.align.split(':'); alignSelected(ax, mode); });
+document.querySelectorAll('[data-dist]').forEach(b => b.onclick = () => distributeSelected(b.dataset.dist));
+document.getElementById('groupBtn').onclick = groupSelected;
+// 選択物すべてを平行移動（矢印キーの微調整用）
+function nudge(dx, dy, dz) {
+  if (!selected.length) return;
+  selected.forEach(n => { n.position.x += dx; n.position.y += dy; n.position.z += dz; });
+  syncPanelFromNode(activeNode()); requestRebuild();
 }
 
 // ============================================================
@@ -1112,20 +1234,26 @@ function refreshProps() {
   propPanel.style.display = ''; propEmpty.style.display = 'none';
   const isGroup = m.userData.kind === 'group';
 
+  const isBool = isGroup && m.userData.op !== 'none';   // 演算グループ（合体/くり抜き/共通）
   $('pName').value = m.userData.name;
   // 図形は実寸(幅/高さ/奥行など)で大きさを指定するので、まぎらわしい「拡縮(倍率)」欄は隠す
   $('scaleRow').style.display = m.userData.kind === 'primitive' ? 'none' : '';
-  $('opWrap').style.display = isGroup ? '' : 'none';
+  $('opWrap').style.display = isBool ? '' : 'none';     // 演算の選択は演算グループだけ
   $('ungroupBtn').style.display = isGroup ? '' : 'none';
+  $('ungroupBtn').textContent = isBool ? '結合を解除（中の図形に分解）' : 'グループを解除';
   $('hollowBtn').style.display = (m.userData.kind === 'primitive' && HOLLOW_TYPES.has(m.userData.type)) ? '' : 'none';
-  if (isGroup) {
+  if (isBool) {
     ['union','subtract','intersect'].forEach(op => $('set' + op[0].toUpperCase() + op.slice(1)).classList.toggle('active', m.userData.op === op));
     $('opHint').textContent = m.userData.op === 'subtract' ? '最初の図形から、残りの図形を引きます。' : m.userData.op === 'intersect' ? '図形が重なっている部分だけ残します。' : 'すべての図形を1つにつなげます。';
   }
 
-  // color only meaningful on the top-level node (it colors the baked mesh)
-  $('colorSection').style.display = isTopLevel(m) ? '' : 'none';
+  // 色・透明度は「1つのメッシュとして描かれる単位」だけで意味を持つ
+  const unit = isRenderUnit(m);
+  $('colorSection').style.display = unit ? '' : 'none';
+  $('opacitySection').style.display = unit ? '' : 'none';
   $('pColor').value = '#' + new THREE.Color(m.userData.color).getHexString();
+  const opPct = Math.round((m.userData.opacity == null ? 1 : m.userData.opacity) * 100);
+  $('pOpacity').value = opPct; $('pOpacityVal').textContent = opPct + '%';
 
   // dimensions (primitive only)
   const dimSection = $('dimSection'), wrap = $('dimWrap'); wrap.innerHTML = '';
@@ -1214,6 +1342,14 @@ function bakeScale(node) {
   undoOnFocus($('pName'));
   $('pName').oninput = () => { const m = activeNode(); if (m) { m.userData.name = $('pName').value; renderTree(); } };
   $('pColor').oninput = () => { pushUndo(); const m = activeNode(); if (m) { m.userData.color = new THREE.Color($('pColor').value).getHex(); renderTree(); requestRebuild(); } };
+  $('pOpacity').addEventListener('pointerdown', () => pushUndo());
+  $('pOpacity').oninput = () => {
+    const m = activeNode(); if (!m) return;
+    const v = parseInt($('pOpacity').value, 10);
+    m.userData.opacity = v / 100;
+    $('pOpacityVal').textContent = v + '%';
+    requestRebuild();
+  };
   document.querySelectorAll('#opWrap [data-op]').forEach(b => b.onclick = () => {
     const m = activeNode(); if (!m || m.userData.kind !== 'group') return;
     pushUndo(); m.userData.op = b.dataset.op; refreshProps(); renderTree(); requestRebuild();
@@ -1257,12 +1393,20 @@ window.addEventListener('keydown', e => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); return; }
   if (e.target.tagName === 'INPUT') return;
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'g') { e.preventDefault(); if (e.shiftKey) ungroupSelected(); else groupSelected(); return; }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'd') { e.preventDefault(); duplicateSelected(); return; }
   if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteSelected(); return; }
   if (e.key === 'w' || e.key === 'W') setMode('translate');
   if (e.key === 'e' || e.key === 'E') setMode('rotate');
   if (e.key === 'r' || e.key === 'R') setMode('scale');
   if (e.key === 'Escape') selectNode(null);
+  // 矢印キーで微調整（Shiftで10mm刻み）。左右=X、上下=Z、PageUp/Down=Y
+  if (selected.length) {
+    const step = e.shiftKey ? 10 : 1;
+    const moves = { ArrowLeft: [-step,0,0], ArrowRight: [step,0,0], ArrowUp: [0,0,-step], ArrowDown: [0,0,step], PageUp: [0,step,0], PageDown: [0,-step,0] };
+    const mv = moves[e.key];
+    if (mv) { e.preventDefault(); if (!e.repeat) pushUndo(); nudge(mv[0], mv[1], mv[2]); }
+  }
 });
 
 // ============================================================
@@ -1282,7 +1426,7 @@ $('exportBtn').onclick = async () => {
 // ============================================================
 function serialize(node) {
   const u = node.userData;
-  const o = { kind: u.kind, name: u.name, color: u.color, expanded: u.expanded,
+  const o = { kind: u.kind, name: u.name, color: u.color, expanded: u.expanded, opacity: u.opacity,
     pos: node.position.toArray(), rot: [node.rotation.x, node.rotation.y, node.rotation.z], scale: node.scale.toArray() };
   if (u.kind === 'primitive') { o.type = u.type; o.params = { ...u.params }; }
   else if (u.kind === 'svg') { o.svg = u.svg; o.params = { ...u.params }; }
@@ -1296,7 +1440,7 @@ function serialize(node) {
 function deserialize(o) {
   const n = new THREE.Object3D();
   n.position.fromArray(o.pos); n.rotation.set(...o.rot); n.scale.fromArray(o.scale);
-  n.userData = { kind: o.kind, name: o.name, color: o.color, id: ++uid, expanded: o.expanded !== false };
+  n.userData = { kind: o.kind, name: o.name, color: o.color, id: ++uid, expanded: o.expanded !== false, opacity: o.opacity };
   if (o.kind === 'primitive') { n.userData.type = o.type; n.userData.params = { ...o.params }; }
   else if (o.kind === 'svg') { n.userData.svg = o.svg; n.userData.params = { ...o.params }; }
   else if (o.kind === 'mesh') {
