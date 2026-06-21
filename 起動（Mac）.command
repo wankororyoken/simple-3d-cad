@@ -4,8 +4,11 @@
 # 右クリック→「開く」を選んでください）。
 cd "$(dirname "$0")"
 PORT=8765
-# 既に起動済みなら使い回す
-if ! curl -s -o /dev/null "http://localhost:$PORT/index.html"; then
+# 別フォルダのサーバーが残っていたら停止して再起動する
+STATUS=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:$PORT/index.html" 2>/dev/null)
+if [ "$STATUS" != "200" ]; then
+  lsof -ti :$PORT | xargs kill 2>/dev/null
+  sleep 0.5
   python3 -m http.server $PORT >/tmp/cad-server.log 2>&1 &
   sleep 1
 fi
