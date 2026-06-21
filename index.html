@@ -245,6 +245,7 @@
       <button id="dropBtn" title="底面をXZ平面(テーブル)に合わせる" style="margin-top:6px; width:100%">⤓ テーブルに置く</button>
       <button id="hollowBtn" title="壁の厚みを残して中をくり抜く（コップ・容器に）" style="display:none; margin-top:6px; width:100%">🥤 中空化（コップ状に）</button>
       <button id="ungroupBtn" style="display:none; margin-top:6px; width:100%">結合を解除（中の図形に分解）</button>
+      <button id="explodeBtn" title="読み込んだ図形を、形ごとの独立オブジェクトに分けます" style="display:none; margin-top:6px; width:100%">✂ パーツに分解（バラバラにする）</button>
     </div>
     <div class="section">
       <h2 id="measureHead">計測（全体）</h2>
@@ -613,32 +614,55 @@ function svgShapeCount(svgText) {
   return n;
 }
 
+// SVG → 「形(shape)」ごとの輪郭リスト。各 shape = [外周, 穴1, 穴2, ...]、各輪郭は [x, -y]（SVGはy下向きなので反転）。
+function svgParseShapes(svgText) {
+  const data = svgLoader.parse(svgText);
+  const shapes = [];
+  data.paths.forEach(path => SVGLoader.createShapes(path).forEach(shape => {
+    const pts = shape.extractPoints(16);
+    shapes.push([pts.shape, ...pts.holes].map(arr => arr.map(v => [v.x, -v.y])));
+  }));
+  return shapes;
+}
+// 図形全体の配置情報（全 shape を含めた外接ボックスから倍率 s と中心 cx,cy を決める）。
+// ※ パーツ分解しても全パーツが「同じ倍率・同じ基準位置」になるよう、必ず全体から算出する。
+function svgLayout(svgText, size) {
+  const shapes = svgParseShapes(svgText);
+  let minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;
+  shapes.forEach(sh => sh.forEach(c => c.forEach(([x, y]) => {
+    if (x < minx) minx = x; if (x > maxx) maxx = x;
+    if (y < miny) miny = y; if (y > maxy) maxy = y;
+  })));
+  const s = size / Math.max(maxx - minx, maxy - miny, 0.001);
+  return { shapes, s, cx: (minx + maxx) / 2, cy: (miny + maxy) / 2, ok: isFinite(minx) && shapes.length > 0 };
+}
+// 指定した shape（idxArr。未指定=全部）の輪郭を、全体基準で倍率・中心合わせした上で「そのパーツ自身の中心」へ寄せて返す。
+// pcx,pcy = パーツ中心の位置(mm, 図形中心からのズレ)。回転後のワールドでは X=pcx, Z=-pcy に対応する。
+function svgPartGeometry(layout, idxArr) {
+  const { shapes, s, cx, cy } = layout;
+  const sel = idxArr ? idxArr.map(i => shapes[i]).filter(Boolean) : shapes;
+  if (!sel.length) return null;
+  let minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;
+  const scaled = [];
+  sel.forEach(sh => sh.forEach(c => {
+    const m = c.map(([x, y]) => [(x - cx) * s, (y - cy) * s]);   // 全体基準で中心合わせ＋mm化
+    m.forEach(([x, y]) => { if (x < minx) minx = x; if (x > maxx) maxx = x; if (y < miny) miny = y; if (y > maxy) maxy = y; });
+    scaled.push(m);
+  }));
+  const pcx = (minx + maxx) / 2, pcy = (miny + maxy) / 2;
+  return { contours: scaled.map(c => c.map(([x, y]) => [x - pcx, y - pcy])), pcx, pcy };   // パーツ自身の原点へ
+}
+
 // SVG leaf → watertight Manifold using Manifold's OWN extrude (clean flat caps).
-// Each contour is extruded as a CrossSection and unioned; then oriented & placed.
+// node.userData.shapeIdx があればその shape だけを立体化（パーツ分解した部品）。なければ全体。
 function svgToManifold(node) {
   const p = node.userData.params;
   const depth = Math.max(0.2, p.depth || 4), size = Math.max(1, p.size || 50);
-  const data = svgLoader.parse(node.userData.svg);
-  // collect EVERY contour (outer + holes of every shape) into one list,
-  // then let Manifold's even-odd polygon engine resolve it all in ONE extrude
-  // (no per-piece union → no gaps at seams).
-  const contours = [];
-  let minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;
-  data.paths.forEach(path => SVGLoader.createShapes(path).forEach(shape => {
-    const pts = shape.extractPoints(16);
-    [pts.shape, ...pts.holes].forEach(arr => {
-      const c = arr.map(v => [v.x, -v.y]);                        // negate Y (SVG is y-down)
-      c.forEach(([x, y]) => {
-        if (x < minx) minx = x; if (x > maxx) maxx = x;
-        if (y < miny) miny = y; if (y > maxy) maxy = y;
-      });
-      contours.push(c);
-    });
-  }));
-  if (!contours.length || !isFinite(minx)) return null;
-  const s = size / Math.max(maxx - minx, maxy - miny, 0.001);
-  const cx = (minx + maxx) / 2, cy = (miny + maxy) / 2;
-  const tc = contours.map(c => c.map(([x, y]) => [(x - cx) * s, (y - cy) * s]));   // center + scale to mm
+  const layout = svgLayout(node.userData.svg, size);
+  if (!layout.ok) return null;
+  const part = svgPartGeometry(layout, node.userData.shapeIdx);
+  if (!part || !part.contours.length) return null;
+  const tc = part.contours;   // パーツ原点中心・mm化済み（穴も含む）。EvenOddで穴を解決して1回でextrude。
 
   const wall = Math.max(0, p.wall || 0);
   let acc = null, cross = null;
@@ -1206,6 +1230,43 @@ function ungroupSelected() {
   selectNode(null); requestRebuild();
 }
 
+// SVGノードを「形(shape)」ごとの独立オブジェクトに分解する。
+// 各パーツは全体と同じ倍率・同じ並びを保ったまま、その場所に置かれる（バラバラに移動・編集可能）。
+function explodeSvg(node) {
+  if (!node || node.userData.kind !== 'svg' || node.userData.shapeIdx) { toast('分解できる図形ではありません', true); return; }
+  const p = node.userData.params;
+  const layout = svgLayout(node.userData.svg, Math.max(1, p.size || 50));
+  if (!layout.ok || layout.shapes.length <= 1) { toast('この図形は1パーツなので分解できません', true); return; }
+  pushUndo();
+  const parent = node.parent;
+  const rs = new THREE.Matrix4().compose(new THREE.Vector3(), node.quaternion, node.scale);   // 元図形の回転・倍率
+  const made = [];
+  layout.shapes.forEach((sh, i) => {
+    const part = newSvg(node.userData.svg, node.userData.name + ' 部品', p.depth);
+    part.userData.shapeIdx = [i];
+    part.userData.params = { ...p };                              // 厚み・大きさ・線の太さを引き継ぐ
+    part.userData.color = palette[counter % palette.length];     // 部品ごとに色を変えて見分けやすく
+    const info = svgPartGeometry(layout, [i]);
+    const off = new THREE.Vector3(info ? info.pcx : 0, 0, info ? -info.pcy : 0).applyMatrix4(rs);
+    part.position.copy(node.position).add(off);                  // 元の並びの位置に配置
+    part.quaternion.copy(node.quaternion); part.scale.copy(node.scale);
+    parent.add(part); made.push(part);
+  });
+  parent.remove(node);
+  selected = made.slice();
+  const a = activeNode();
+  if (a) transform.attach(a); else transform.detach();
+  renderTree(); refreshProps(); updateBoolButtons(); updateHighlight(); updateMeasure(); requestRebuild();
+  toast(`${made.length}個のパーツに分解しました（それぞれ個別に編集・移動できます）`);
+}
+// 取り込み直後、複数パーツなら「ばらばらに取り込むか」を確認
+function offerSplitOnImport(node) {
+  const n = svgParseShapes(node.userData.svg).length;
+  if (n > 1 && confirm(`この図形は ${n} 個のパーツに分かれています。\nばらばらに取り込みますか？\n\n「OK」＝パーツごとに分けて取り込む\n「キャンセル」＝1個のまま（あとで「パーツに分解」ボタンでも分けられます）`)) {
+    explodeSvg(node);
+  }
+}
+
 // ============================================================
 //  整列・均等配置・微調整（複数選択に作用）
 // ============================================================
@@ -1314,6 +1375,7 @@ function refreshProps() {
   $('ungroupBtn').style.display = isGroup ? '' : 'none';
   $('ungroupBtn').textContent = isBool ? '結合を解除（中の図形に分解）' : 'グループを解除';
   $('hollowBtn').style.display = (m.userData.kind === 'primitive' && HOLLOW_TYPES.has(m.userData.type)) ? '' : 'none';
+  $('explodeBtn').style.display = (m.userData.kind === 'svg' && !m.userData.shapeIdx) ? '' : 'none';   // 分解前のSVG全体だけ
   if (isBool) {
     ['union','subtract','intersect'].forEach(op => $('set' + op[0].toUpperCase() + op.slice(1)).classList.toggle('active', m.userData.op === op));
     $('opHint').textContent = m.userData.op === 'subtract' ? '最初の図形から、残りの図形を引きます。' : m.userData.op === 'intersect' ? '図形が重なっている部分だけ残します。' : 'すべての図形を1つにつなげます。';
@@ -1435,6 +1497,7 @@ function bakeScale(node) {
   $('dropBtn').onclick = dropToBed;
   $('hollowBtn').onclick = hollowSelected;
   $('ungroupBtn').onclick = ungroupSelected;
+  $('explodeBtn').onclick = () => explodeSvg(activeNode());
 })();
 
 // ============================================================
@@ -1503,7 +1566,7 @@ function serialize(node) {
   const o = { kind: u.kind, name: u.name, color: u.color, expanded: u.expanded, opacity: u.opacity,
     pos: node.position.toArray(), rot: [node.rotation.x, node.rotation.y, node.rotation.z], scale: node.scale.toArray() };
   if (u.kind === 'primitive') { o.type = u.type; o.params = { ...u.params }; }
-  else if (u.kind === 'svg') { o.svg = u.svg; o.params = { ...u.params }; }
+  else if (u.kind === 'svg') { o.svg = u.svg; o.params = { ...u.params }; if (u.shapeIdx) o.shapeIdx = u.shapeIdx.slice(); }
   else if (u.kind === 'mesh') {
     const g = u.geometry;
     o.geom = { pos: Array.from(g.attributes.position.array), idx: g.index ? Array.from(g.index.array) : null };
@@ -1516,7 +1579,7 @@ function deserialize(o) {
   n.position.fromArray(o.pos); n.rotation.set(...o.rot); n.scale.fromArray(o.scale);
   n.userData = { kind: o.kind, name: o.name, color: o.color, id: ++uid, expanded: o.expanded !== false, opacity: o.opacity };
   if (o.kind === 'primitive') { n.userData.type = o.type; n.userData.params = { ...o.params }; }
-  else if (o.kind === 'svg') { n.userData.svg = o.svg; n.userData.params = { ...o.params }; }
+  else if (o.kind === 'svg') { n.userData.svg = o.svg; n.userData.params = { ...o.params }; if (o.shapeIdx) n.userData.shapeIdx = o.shapeIdx.slice(); }
   else if (o.kind === 'mesh') {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(o.geom.pos, 3));
@@ -1561,6 +1624,7 @@ $('svgInput').onchange = e => {
       if (!svgShapeCount(node.userData.svg)) throw new Error('SVGに図形が見つかりません');
       model.add(node); selectNode(node); requestRebuild();
       toast('SVGを読み込みました');
+      offerSplitOnImport(node);
     } catch (err) { console.error(err); toast('SVGの読み込みに失敗しました', true); }
   };
   reader.readAsText(f); e.target.value = '';
@@ -1628,6 +1692,7 @@ $('traceGo').onclick = () => {
         pushUndo();
         model.add(node); selectNode(node); requestRebuild();
         toast('トレースして3D化しました');
+        offerSplitOnImport(node);
       } catch (err) { console.error(err); toast('3D化に失敗しました（しきい値を調整してみてください）', true); }
       traceModal.style.display = 'none'; srcData = null;
     });
