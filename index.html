@@ -738,7 +738,7 @@ function doRebuild() {
   for (const node of childNodes(model)) {
     const geom = evalGeometry(node);
     if (!geom) continue;
-    const mesh = new THREE.Mesh(geom, new THREE.MeshStandardMaterial({ color: node.userData.color, roughness: 0.55, metalness: 0.05 }));
+    const mesh = new THREE.Mesh(geom, new THREE.MeshPhongMaterial({ color: node.userData.color, shininess: 60 }));
     mesh.castShadow = mesh.receiveShadow = true;
     mesh.userData.topId = node.userData.id;
     display.add(mesh);
