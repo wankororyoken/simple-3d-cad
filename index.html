@@ -133,6 +133,8 @@
         <button data-add="cone">▲ 円錐</button>
         <button data-add="torus">◯ トーラス</button>
         <button data-add="pyramid">◆ 四角錐</button>
+        <button data-add="boxtaper">⏶ 角錐台</button>
+        <button data-add="trapezoid">⏢ 台形</button>
         <button data-add="text" disabled>🅰 文字(読込中)</button>
       </div>
     </div>
@@ -441,30 +443,34 @@ scene.add(transform);
 // ============================================================
 let uid = 0, counter = 0;
 const palette = [0x4f9cff, 0xef8c5b, 0x5bd6a0, 0xc98cff, 0xf0d35b, 0xff7aa8];
-const labels = { box:'直方体', roundedprism:'角丸ボックス', cylinder:'円柱', taper:'円錐台', sphere:'球', cone:'円錐', pyramid:'四角錐', torus:'トーラス', text:'文字', group:'結合形状' };
+const labels = { box:'直方体', roundedprism:'角丸ボックス', cylinder:'円柱', taper:'円錐台', sphere:'球', cone:'円錐', pyramid:'四角錐', torus:'トーラス', boxtaper:'角錐台', trapezoid:'台形', text:'文字', group:'結合形状' };
 const svgDimDefs = [['depth','厚み mm'],['size','大きさ mm'],['wall','線の太さ mm(0=塗り)']];
 const opLabel = { union:'合体', subtract:'くり抜き', intersect:'共通部分', none:'グループ' };
 
 const defaults = {
   box:      { w: 30, h: 30, d: 30, fillet: 0 },
   roundedprism: { w: 40, h: 20, d: 40, r: 8 },
-  cylinder: { r: 15, h: 30, seg: 48 },
-  taper:    { rt: 12, rb: 16, h: 40, seg: 48 },
+  cylinder: { r: 15, h: 30, seg: 48, fillet: 0 },
+  taper:    { rt: 12, rb: 16, h: 40, seg: 48, fillet: 0 },
   sphere:   { r: 18, seg: 48 },
-  cone:     { r: 16, h: 34, seg: 48 },
+  cone:     { r: 16, h: 34, seg: 48, fillet: 0 },
   pyramid:  { r: 20, h: 34 },
   torus:    { r: 18, t: 6, seg: 48 },
+  boxtaper: { wb: 40, db: 40, wt: 20, dt: 20, h: 30 },
+  trapezoid:{ wb: 40, wt: 20, h: 30, d: 30 },
   text:     { text: 'ABC', size: 14, depth: 6 },
 };
 const dimDefs = {
   box: [['w','幅 X'],['h','高さ Y'],['d','奥行 Z'],['fillet','角丸め r']],
   roundedprism: [['w','幅 X'],['d','奥行 Z'],['h','高さ Y'],['r','角丸め r']],
-  cylinder: [['r','直径'],['h','高さ'],['seg','分割数']],
-  taper: [['rt','上の直径'],['rb','下の直径'],['h','高さ'],['seg','分割数']],
+  cylinder: [['r','直径'],['h','高さ'],['seg','分割数'],['fillet','角丸め r']],
+  taper: [['rt','上の直径'],['rb','下の直径'],['h','高さ'],['seg','分割数'],['fillet','角丸め r']],
   sphere: [['r','直径'],['seg','分割数']],
-  cone: [['r','直径'],['h','高さ'],['seg','分割数']],
+  cone: [['r','直径'],['h','高さ'],['seg','分割数'],['fillet','角丸め r']],
   pyramid: [['r','底半径'],['h','高さ']],
   torus: [['r','直径(リング)'],['t','太さ'],['seg','分割数']],
+  boxtaper: [['wb','下の幅 X'],['db','下の奥行 Z'],['wt','上の幅 X'],['dt','上の奥行 Z'],['h','高さ Y']],
+  trapezoid: [['wb','下辺の幅'],['wt','上辺の幅'],['h','高さ'],['d','奥行 Z']],
   text: [['text','文字'],['size','サイズ'],['depth','厚み']],
 };
 // 内部は半径で保持するが入力欄では直径表示にするキー
@@ -490,6 +496,38 @@ function roundedRectShape(w, h, r) {
   return s;
 }
 
+// 回転体（ろくろ）のプロファイルを、角を丸めながら作る。
+// corners: [x(=半径,≥0), y] の配列（下→上の順。最初と最後は軸上＝端なので丸めない）。
+// f: 角丸め半径。seg: 円周方向の分割数。
+function roundedLatheProfile(corners, f, seg) {
+  const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+  const toward = (from, to, d) => {           // from から to 方向へ距離 d の点
+    const len = dist(from, to) || 1;
+    return [from[0] + (to[0] - from[0]) * d / len, from[1] + (to[1] - from[1]) * d / len];
+  };
+  const path = new THREE.Path();
+  path.moveTo(corners[0][0], corners[0][1]);
+  for (let i = 1; i < corners.length - 1; i++) {
+    const A = corners[i - 1], B = corners[i], C = corners[i + 1];
+    const fab = Math.min(f, dist(A, B) * 0.49, dist(B, C) * 0.49);
+    if (fab <= 0.01) { path.lineTo(B[0], B[1]); continue; }
+    const TA = toward(B, A, fab), TC = toward(B, C, fab);
+    path.lineTo(TA[0], TA[1]);
+    path.quadraticCurveTo(B[0], B[1], TC[0], TC[1]);   // 角を丸くつなぐ
+  }
+  const last = corners[corners.length - 1];
+  path.lineTo(last[0], last[1]);
+  // 曲線を点列に。連続して重なる点は除く（Lathe の退化三角形を防ぐ）
+  const raw = path.getPoints(10);
+  const pts = [];
+  for (const pt of raw) {
+    const x = Math.max(0, pt.x);
+    if (pts.length && Math.hypot(x - pts[pts.length - 1].x, pt.y - pts[pts.length - 1].y) < 1e-4) continue;
+    pts.push(new THREE.Vector2(x, pt.y));
+  }
+  return new THREE.LatheGeometry(pts, seg);
+}
+
 function buildGeometry(type, p) {
   switch (type) {
     case 'box': {
@@ -506,12 +544,46 @@ function buildGeometry(type, p) {
       geo.rotateX(-Math.PI / 2);       // 押し出し軸をYへ → 幅X・高さY・奥行Z
       return geo;
     }
-    case 'cylinder': return new THREE.CylinderGeometry(p.r, p.r, p.h, p.seg);
-    case 'taper': return new THREE.CylinderGeometry(p.rt, p.rb, p.h, p.seg);
+    case 'cylinder': {
+      if (p.fillet > 0.05) return roundedLatheProfile([[0,-p.h/2],[p.r,-p.h/2],[p.r,p.h/2],[0,p.h/2]], p.fillet, p.seg);
+      return new THREE.CylinderGeometry(p.r, p.r, p.h, p.seg);
+    }
+    case 'taper': {
+      if (p.fillet > 0.05) return roundedLatheProfile([[0,-p.h/2],[p.rb,-p.h/2],[p.rt,p.h/2],[0,p.h/2]], p.fillet, p.seg);
+      return new THREE.CylinderGeometry(p.rt, p.rb, p.h, p.seg);
+    }
     case 'sphere': return new THREE.SphereGeometry(p.r, p.seg, Math.max(8, Math.round(p.seg / 2)));
-    case 'cone': return new THREE.ConeGeometry(p.r, p.h, p.seg);
+    case 'cone': {
+      if (p.fillet > 0.05) return roundedLatheProfile([[0,-p.h/2],[p.r,-p.h/2],[0,p.h/2]], p.fillet, p.seg);
+      return new THREE.ConeGeometry(p.r, p.h, p.seg);
+    }
     case 'pyramid': return new THREE.ConeGeometry(p.r, p.h, 4);
     case 'torus': return new THREE.TorusGeometry(p.r, p.t, 16, p.seg);
+    case 'boxtaper': {
+      // 角錐台：BoxGeometry の上下頂点を別々に拡縮（正しい面の向きを保てる）
+      const g = new THREE.BoxGeometry(1, 1, 1);
+      const pos = g.attributes.position;
+      for (let i = 0; i < pos.count; i++) {
+        const top = pos.getY(i) > 0;
+        pos.setX(i, pos.getX(i) * (top ? p.wt : p.wb));
+        pos.setZ(i, pos.getZ(i) * (top ? p.dt : p.db));
+        pos.setY(i, pos.getY(i) * p.h);
+      }
+      pos.needsUpdate = true;
+      return g;
+    }
+    case 'trapezoid': {
+      // 台形プリズム：正面(XY)が台形、奥行(Z)へ押し出す
+      const s = new THREE.Shape();
+      s.moveTo(-p.wb/2, -p.h/2);
+      s.lineTo(p.wb/2, -p.h/2);
+      s.lineTo(p.wt/2, p.h/2);
+      s.lineTo(-p.wt/2, p.h/2);
+      s.closePath();
+      const geo = new THREE.ExtrudeGeometry(s, { depth: p.d, bevelEnabled: false });
+      geo.translate(0, 0, -p.d/2);
+      return geo;
+    }
     case 'text': {
       // 実際の立体は textToManifold が watertight に生成する。ここは配置(テーブルに乗せる)用の
       // 外形サイズ(bbox)だけ分かれば十分なので、文字の縦横に合わせた箱を返す。
@@ -1313,12 +1385,14 @@ function bakeScale(node) {
   const mul = (k, f) => { if (p[k] != null) p[k] = Math.round(p[k] * f * 100) / 100; };
   if (t === 'box') { mul('w', s.x); mul('h', s.y); mul('d', s.z); mul('fillet', Math.min(s.x, s.y, s.z)); }
   else if (t === 'roundedprism') { mul('w', s.x); mul('h', s.y); mul('d', s.z); mul('r', Math.min(s.x, s.z)); }
-  else if (t === 'cylinder') { mul('r', rxz); mul('h', s.y); }
-  else if (t === 'taper') { mul('rt', rxz); mul('rb', rxz); mul('h', s.y); }
-  else if (t === 'cone') { mul('r', rxz); mul('h', s.y); }
+  else if (t === 'cylinder') { mul('r', rxz); mul('h', s.y); mul('fillet', Math.min(rxz, s.y)); }
+  else if (t === 'taper') { mul('rt', rxz); mul('rb', rxz); mul('h', s.y); mul('fillet', Math.min(rxz, s.y)); }
+  else if (t === 'cone') { mul('r', rxz); mul('h', s.y); mul('fillet', Math.min(rxz, s.y)); }
   else if (t === 'pyramid') { mul('r', rxz); mul('h', s.y); }
   else if (t === 'sphere') { mul('r', all); }
   else if (t === 'torus') { mul('r', rxz); mul('t', all); }
+  else if (t === 'boxtaper') { mul('wb', s.x); mul('wt', s.x); mul('db', s.z); mul('dt', s.z); mul('h', s.y); }
+  else if (t === 'trapezoid') { mul('wb', s.x); mul('wt', s.x); mul('h', s.y); mul('d', s.z); }
   else if (t === 'text') { mul('size', (s.x + s.y) / 2); mul('depth', s.z); }
   node.scale.set(1, 1, 1);
   return true;
