@@ -293,11 +293,10 @@ import ManifoldModule from './vendor/manifold/manifold.js';
 //  Scene setup
 // ============================================================
 const viewport = document.getElementById('viewport');
+THREE.ColorManagement.enabled = false;
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 viewport.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
