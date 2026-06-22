@@ -38,6 +38,14 @@
   #right { border-left: 1px solid var(--line); }
   .section { padding: 12px; border-bottom: 1px solid var(--line); }
   .section h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); margin: 0 0 9px; }
+  /* 見出しクリックで開閉（折りたたみ） */
+  .section > h2 { cursor: pointer; user-select: none; }
+  .section > h2:hover { color: var(--text); }
+  .section > h2::before { content: '▾'; display: inline-block; width: 10px; font-size: 9px; margin-right: 6px; color: var(--muted); transition: transform .15s; }
+  .section.collapsed > h2::before { transform: rotate(-90deg); }
+  .section.collapsed > h2 { margin-bottom: 0; }
+  .section.collapsed { padding-top: 10px; padding-bottom: 10px; }
+  .section.collapsed > :not(h2) { display: none !important; }
   .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
   .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
   button {
@@ -1498,6 +1506,19 @@ function bakeScale(node) {
   $('hollowBtn').onclick = hollowSelected;
   $('ungroupBtn').onclick = ungroupSelected;
   $('explodeBtn').onclick = () => explodeSvg(activeNode());
+})();
+
+// 各セクションの見出しクリックで開閉。状態は localStorage に保存（リロードしても維持）。
+(function setupCollapsibleSections() {
+  [...document.querySelectorAll('.section')].forEach((sec, i) => {
+    const h2 = sec.querySelector('h2'); if (!h2) return;
+    const key = 'cadSec:' + i;
+    try { if (localStorage.getItem(key) === '1') sec.classList.add('collapsed'); } catch (e) {}
+    h2.addEventListener('click', () => {
+      const collapsed = sec.classList.toggle('collapsed');
+      try { localStorage.setItem(key, collapsed ? '1' : '0'); } catch (e) {}
+    });
+  });
 })();
 
 // ============================================================
