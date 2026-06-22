@@ -108,6 +108,29 @@
   .trace-ctrl input[type=range] { width: 100%; }
   .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
   kbd { background: #1b1f25; border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; font-size: 11px; font-family: inherit; }
+
+  /* ===== スマホ・狭い画面向け：縦並びレイアウト（3Dビューを上、道具を下にスクロール） ===== */
+  @media (max-width: 720px) {
+    html, body { overflow: auto; height: auto; }
+    #app { display: flex; flex-direction: column; height: auto; min-height: 100vh; }
+    /* ヘッダー：折り返して全ボタンを表示。タイトル＋モードを1行目、ファイル系を次の行へ。 */
+    header { height: auto; flex-wrap: wrap; gap: 6px; padding: 7px 8px; }
+    header h1 { font-size: 14px; }
+    header .hint { display: none; }                       /* キーボードのヒントは省略 */
+    header .spacer { flex-basis: 100%; height: 0; margin: 0; }  /* ここで改行（ファイル系を次の行へ） */
+    header .modes { margin-left: auto; }                  /* モードは1行目の右側へ */
+    .modebtn { padding: 5px 8px; font-size: 12px; }
+    header button { font-size: 12px; padding: 6px 9px; }
+    /* 3Dビューを上部に固定サイズで確保、サイドバーはその下に縦積み（ページごとスクロール） */
+    #viewport { order: 1; height: 46vh; min-height: 240px; }
+    #left  { order: 2; border: none; border-top: 1px solid var(--line); overflow: visible; }
+    #right { order: 3; border: none; border-top: 1px solid var(--line); overflow: visible; }
+    .section { padding: 10px; }
+    /* タッチでも押しやすいよう少しだけ余白を確保 */
+    .node-row { padding: 8px; }
+    .toolbar { top: 8px; left: 8px; padding: 5px; gap: 4px; }
+    .toolbar button { padding: 6px 8px; min-width: 34px; }
+  }
 </style>
 </head>
 <body>
