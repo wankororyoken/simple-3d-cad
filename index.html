@@ -166,6 +166,7 @@
         <button data-add="pyramid">◆ 四角錐</button>
         <button data-add="boxtaper">⏶ 角錐台</button>
         <button data-add="trapezoid">⏢ 台形</button>
+        <button data-add="triangle">▲ 三角形</button>
         <button data-add="text" disabled>🅰 文字(読込中)</button>
       </div>
     </div>
@@ -475,7 +476,7 @@ scene.add(transform);
 // ============================================================
 let uid = 0, counter = 0;
 const palette = [0x4f9cff, 0xef8c5b, 0x5bd6a0, 0xc98cff, 0xf0d35b, 0xff7aa8];
-const labels = { box:'直方体', roundedprism:'角丸ボックス', cylinder:'円柱', taper:'円錐台', sphere:'球', cone:'円錐', pyramid:'四角錐', torus:'トーラス', boxtaper:'角錐台', trapezoid:'台形', text:'文字', group:'結合形状' };
+const labels = { box:'直方体', roundedprism:'角丸ボックス', cylinder:'円柱', taper:'円錐台', sphere:'球', cone:'円錐', pyramid:'四角錐', torus:'トーラス', boxtaper:'角錐台', trapezoid:'台形', triangle:'三角形', text:'文字', group:'結合形状' };
 const svgDimDefs = [['depth','厚み mm'],['size','大きさ mm'],['wall','線の太さ mm(0=塗り)']];
 const opLabel = { union:'合体', subtract:'くり抜き', intersect:'共通部分', none:'グループ' };
 
@@ -490,6 +491,7 @@ const defaults = {
   torus:    { r: 18, t: 6, seg: 48 },
   boxtaper: { wb: 40, db: 40, wt: 20, dt: 20, h: 30 },
   trapezoid:{ wb: 40, wt: 20, h: 30, d: 30 },
+  triangle: { w: 40, h: 35, d: 30 },
   text:     { text: 'ABC', size: 14, depth: 6 },
 };
 const dimDefs = {
@@ -503,6 +505,7 @@ const dimDefs = {
   torus: [['r','直径(リング)'],['t','太さ'],['seg','分割数']],
   boxtaper: [['wb','下の幅 X'],['db','下の奥行 Z'],['wt','上の幅 X'],['dt','上の奥行 Z'],['h','高さ Y']],
   trapezoid: [['wb','下辺の幅'],['wt','上辺の幅'],['h','高さ'],['d','奥行 Z']],
+  triangle: [['w','底辺の幅'],['h','高さ'],['d','奥行 Z']],
   text: [['text','文字'],['size','サイズ'],['depth','厚み']],
 };
 // 内部は半径で保持するが入力欄では直径表示にするキー
@@ -611,6 +614,17 @@ function buildGeometry(type, p) {
       s.lineTo(p.wb/2, -p.h/2);
       s.lineTo(p.wt/2, p.h/2);
       s.lineTo(-p.wt/2, p.h/2);
+      s.closePath();
+      const geo = new THREE.ExtrudeGeometry(s, { depth: p.d, bevelEnabled: false });
+      geo.translate(0, 0, -p.d/2);
+      return geo;
+    }
+    case 'triangle': {
+      // 三角柱：正面(XY)が二等辺三角形（底辺 w・高さ h、頂点は上の中央）、奥行(Z)へ押し出す
+      const s = new THREE.Shape();
+      s.moveTo(-p.w/2, -p.h/2);
+      s.lineTo(p.w/2, -p.h/2);
+      s.lineTo(0, p.h/2);
       s.closePath();
       const geo = new THREE.ExtrudeGeometry(s, { depth: p.d, bevelEnabled: false });
       geo.translate(0, 0, -p.d/2);
@@ -1486,6 +1500,7 @@ function bakeScale(node) {
   else if (t === 'torus') { mul('r', rxz); mul('t', all); }
   else if (t === 'boxtaper') { mul('wb', s.x); mul('wt', s.x); mul('db', s.z); mul('dt', s.z); mul('h', s.y); }
   else if (t === 'trapezoid') { mul('wb', s.x); mul('wt', s.x); mul('h', s.y); mul('d', s.z); }
+  else if (t === 'triangle') { mul('w', s.x); mul('h', s.y); mul('d', s.z); }
   else if (t === 'text') { mul('size', (s.x + s.y) / 2); mul('depth', s.z); }
   node.scale.set(1, 1, 1);
   return true;
