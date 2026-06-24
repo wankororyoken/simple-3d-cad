@@ -1771,9 +1771,11 @@ $('traceGo').onclick = () => {
   } catch (err) { console.error(err); toast('トレースに失敗しました', true); }
 };
 
-$('saveBtn').onclick = () => {
+$('saveBtn').onclick = async () => {
   const data = { v: 2, model: childNodes(model).map(serialize) };
-  download(new Blob([JSON.stringify(data)], { type: 'application/json' }), 'design.json');
+  const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
+  const saved = await saveBlob(blob, 'design.json', { description: '3D CAD 編集用データ', accept: { 'application/json': ['.json'] } });
+  if (saved) toast(saved + ' を保存しました');
 };
 $('loadBtn').onclick = () => $('fileInput').click();
 $('fileInput').onchange = e => {
