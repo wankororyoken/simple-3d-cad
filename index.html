@@ -1227,6 +1227,7 @@ function hollowSelected() {
   parent.add(g);
   g.add(a);          // 外側（ベース）
   g.add(inner);      // 内側を引く
+  centerGroupPivot(g);   // グループ原点を中身の中心へ
   selectNode(inner);
   requestRebuild();
   toast(`中空化しました（壁${round(t)}mm）。内側を選べば厚みや深さを微調整できます`);
@@ -1237,6 +1238,27 @@ function hollowSelected() {
 // ============================================================
 function canCombine() { return sameParent(); }
 // 選択した複数の図形を1つのグループ(node)にまとめる。op='none' なら非破壊グループ。
+// グループの原点(ギズモ位置)を中身の中心へ移動する。中身のワールド変換は保つ
+// （回転は変えず position だけ動かし、各子のローカルを再計算）。原点がオブジェクトから
+// 離れた場所に出てしまう問題を防ぐ。
+function centerGroupPivot(g) {
+  const parent = g.parent; if (!parent) return;
+  g.updateMatrixWorld(true);
+  let box = nodeWorldBox(g);                                  // 演算結果そのものの外接ボックス
+  if (!box) { box = new THREE.Box3(); childNodes(g).forEach(n => { const b = nodeWorldBox(n); if (b) box.union(b); }); }
+  if (!box || box.isEmpty()) return;
+  const kids = childNodes(g);
+  const worlds = kids.map(n => n.matrixWorld.clone());        // 子のワールド変換を控える
+  parent.updateWorldMatrix(true, false);
+  g.position.copy(parent.worldToLocal(box.getCenter(new THREE.Vector3())));
+  g.updateMatrixWorld(true);
+  const inv = g.matrixWorld.clone().invert();
+  kids.forEach((n, i) => {                                    // 子はワールドを保つようローカルを再計算
+    n.matrix.copy(inv).multiply(worlds[i]);
+    n.matrix.decompose(n.position, n.quaternion, n.scale);
+    n.matrixWorldNeedsUpdate = true;
+  });
+}
 function wrapSelected(op) {
   if (!sameParent()) return null;
   const nodes = selected.slice();           // クリック順を保持（くり抜きは先頭から引く）
@@ -1245,6 +1267,7 @@ function wrapSelected(op) {
   g.userData.color = nodes[0].userData.color;
   parent.add(g);          // group sits at parent's origin (identity) → children keep world transform
   nodes.forEach(n => g.add(n));
+  centerGroupPivot(g);    // 原点を中身の中心に置く（ギズモが離れた所に出ないように）
   return g;
 }
 function combine(op) {
@@ -1277,7 +1300,7 @@ function ungroupSelected() {
   const a = activeNode(); if (!a || a.userData.kind !== 'group') return;
   pushUndo();
   const parent = a.parent;
-  childNodes(a).forEach(ch => parent.add(ch));   // children keep world transform (group is identity)
+  childNodes(a).forEach(ch => parent.attach(ch));   // attach=ワールド変換を保ったまま親へ移す
   parent.remove(a);
   selectNode(null); requestRebuild();
 }
