@@ -326,6 +326,27 @@
 <input type="file" id="svgInput" accept=".svg" style="display:none" />
 <input type="file" id="imgInput" accept="image/*" style="display:none" />
 
+<div id="hollowModal" class="modal-overlay" style="display:none">
+  <div class="modal" style="width:380px">
+    <h3>中空化（コップ状に）</h3>
+    <div class="row"><label>壁の厚み</label><input type="number" id="hwWall" min="0.4" step="0.1" value="2" style="flex:1; min-width:0;"><span class="muted" style="width:28px; flex-shrink:0;">mm</span></div>
+    <div class="muted" style="margin:-4px 0 14px">側面・底とも同じ厚みになります。</div>
+    <label style="display:flex; align-items:center; gap:8px; margin-bottom:10px; cursor:pointer; user-select:none;">
+      <input type="checkbox" id="hwLid" style="width:auto;" /> はめ込み式のフタも作成する
+    </label>
+    <div id="hwLidOpts" style="display:none">
+      <div class="row"><label>すきま</label><input type="number" id="hwGap" min="0" step="0.05" value="0.2" style="flex:1; min-width:0;"><span class="muted" style="width:28px; flex-shrink:0;">mm</span></div>
+      <div class="muted" style="margin:-4px 0 14px">差し込み部分の片側あたりのすきま。0.1〜0.2mmはきつめ、0.3〜0.4mmはゆるめの目安です（プリンタの精度に応じて調整してください）。</div>
+      <div class="row"><label>フタの厚み</label><input type="number" id="hwCapH" min="0.8" step="0.5" value="3" style="flex:1; min-width:0;"><span class="muted" style="width:28px; flex-shrink:0;">mm</span></div>
+      <div class="row"><label>差込み長さ</label><input type="number" id="hwPlugH" min="1" step="0.5" value="6" style="flex:1; min-width:0;"><span class="muted" style="width:28px; flex-shrink:0;">mm</span></div>
+    </div>
+    <div class="modal-actions">
+      <button id="hwCancel">キャンセル</button>
+      <button id="hwGo" class="primary">中空化する</button>
+    </div>
+  </div>
+</div>
+
 <div id="traceModal" class="modal-overlay" style="display:none">
   <div class="modal">
     <h3>画像トレース → 3D化</h3>
@@ -1238,17 +1259,51 @@ function makeInner(node, wall, floor) {
   inner.position.y = node.position.y + (floor + over) / 2;   // 底をfloor残し、上面を開ける
   return inner;
 }
-function hollowSelected() {
-  const a = activeNode();
-  if (!a || a.userData.kind !== 'primitive' || !HOLLOW_TYPES.has(a.userData.type)) {
-    toast('中空化できるのは 円柱・円錐台・直方体・角丸ボックス です', true); return;
+// はめ込み式のフタを作る：キャップ(上面)＋プラグ(差し込み部)を合体した、独立した新しい図形（group）を返す。
+// gap = 差し込み部の片側あたりのすきま(mm)。開口部は cylinder/taper なら上の半径(taperはrt)、box/roundedprismなら幅・奥行。
+// プラグがつぶれる／すきまが大きすぎる場合は null。
+function makeLid(node, wall, gap, capH, plugH) {
+  const p = node.userData.params;
+  const round_ = node.userData.type !== 'box' && node.userData.type !== 'roundedprism';
+  const cavityDepth = Math.max(1, p.h - wall - 0.5);   // 内側の深さを超えて差し込めないようクランプ
+  plugH = Math.min(plugH, cavityDepth);
+  let capNode, plugNode, outerSize;
+  if (round_) {
+    const outerR = node.userData.type === 'taper' ? p.rt : p.r;   // 開口部はtaperなら上(rt)
+    const plugR = outerR - wall - gap;
+    if (plugR <= 0.2) return null;
+    capNode = newPrimitive('cylinder'); capNode.userData.params = { r: outerR, h: capH, seg: p.seg || 48, fillet: 0 };
+    plugNode = newPrimitive('cylinder'); plugNode.userData.params = { r: plugR, h: plugH, seg: p.seg || 48, fillet: 0 };
+    outerSize = outerR * 2;
+  } else {
+    const plugW = p.w - 2 * wall - 2 * gap, plugD = p.d - 2 * wall - 2 * gap;
+    if (plugW <= 0.4 || plugD <= 0.4) return null;
+    capNode = newPrimitive('box'); capNode.userData.params = { w: p.w, h: capH, d: p.d, fillet: 0 };
+    plugNode = newPrimitive('box'); plugNode.userData.params = { w: plugW, h: plugH, d: plugD, fillet: 0 };
+    outerSize = Math.max(p.w, p.d);
   }
-  const input = prompt('壁の厚み（mm）を入力してください\n（側面・底とも同じ厚みになります）', '2');
-  if (input === null) return;                       // キャンセル
-  const t = parseFloat(input);
-  if (!isFinite(t) || t <= 0) { toast('正しい数値（mmの正の数）を入力してください', true); return; }
-  const inner = makeInner(a, t, t);                 // 壁=底=t
+  const over = 0.4;                                   // キャップとプラグの継ぎ目を確実に溶着させる重なり
+  capNode.userData.name = 'フタ（上面）'; capNode.userData.color = node.userData.color;
+  plugNode.userData.name = 'フタ（差し込み部）'; plugNode.userData.color = node.userData.color;
+  plugNode.position.y = plugH / 2;                     // プラグの底を y=0（テーブル）に
+  capNode.position.y = plugH - over + capH / 2;
+  const g = newGroup('union');
+  g.userData.name = node.userData.name + ' フタ';
+  g.userData.color = node.userData.color;
+  g.add(capNode); g.add(plugNode);
+  g.position.set(node.position.x + outerSize + 15, 0, node.position.z);   // 容器の隣にテーブル設置の状態で配置
+  return g;
+}
+function doHollow(wall, lidOpts) {
+  const a = activeNode();
+  if (!a || a.userData.kind !== 'primitive' || !HOLLOW_TYPES.has(a.userData.type)) return;
+  const inner = makeInner(a, wall, wall);             // 壁=底=wall
   if (!inner) { toast('壁が厚すぎます。もっと薄くしてください', true); return; }
+  let lid = null;
+  if (lidOpts) {
+    lid = makeLid(a, wall, lidOpts.gap, lidOpts.capH, lidOpts.plugH);
+    if (!lid) { toast('フタを作れませんでした。すきまや壁の厚みを見直してください', true); return; }
+  }
   pushUndo();
   const parent = a.parent;
   const g = newGroup('subtract');
@@ -1257,9 +1312,10 @@ function hollowSelected() {
   g.add(a);          // 外側（ベース）
   g.add(inner);      // 内側を引く
   centerGroupPivot(g);   // グループ原点を中身の中心へ
+  if (lid) parent.add(lid);
   selectNode(inner);
   requestRebuild();
-  toast(`中空化しました（壁${round(t)}mm）。内側を選べば厚みや深さを微調整できます`);
+  toast(lid ? `中空化とフタを作成しました（壁${round(wall)}mm）` : `中空化しました（壁${round(wall)}mm）。内側を選べば厚みや深さを微調整できます`);
 }
 
 // ============================================================
@@ -1650,7 +1706,28 @@ function bakeScale(node) {
   $('dupBtn').onclick = duplicateSelected;
   $('delBtn').onclick = deleteSelected;
   $('dropBtn').onclick = dropToBed;
-  $('hollowBtn').onclick = hollowSelected;
+  $('hollowBtn').onclick = () => {
+    const a = activeNode();
+    if (!a || a.userData.kind !== 'primitive' || !HOLLOW_TYPES.has(a.userData.type)) {
+      toast('中空化できるのは 円柱・円錐台・直方体・角丸ボックス です', true); return;
+    }
+    $('hwWall').value = '2'; $('hwLid').checked = false; $('hwLidOpts').style.display = 'none';
+    $('hwGap').value = '0.2'; $('hwCapH').value = '3'; $('hwPlugH').value = '6';
+    $('hollowModal').style.display = 'flex';
+  };
+  $('hwLid').onchange = () => { $('hwLidOpts').style.display = $('hwLid').checked ? '' : 'none'; };
+  $('hwCancel').onclick = () => $('hollowModal').style.display = 'none';
+  $('hwGo').onclick = () => {
+    const wall = parseFloat($('hwWall').value);
+    if (!isFinite(wall) || wall <= 0) { toast('壁の厚みは正しい数値（mmの正の数）を入力してください', true); return; }
+    const lidOpts = $('hwLid').checked ? {
+      gap: Math.max(0, parseFloat($('hwGap').value) || 0),
+      capH: Math.max(0.4, parseFloat($('hwCapH').value) || 3),
+      plugH: Math.max(0.5, parseFloat($('hwPlugH').value) || 6),
+    } : null;
+    $('hollowModal').style.display = 'none';
+    doHollow(wall, lidOpts);
+  };
   $('ungroupBtn').onclick = ungroupSelected;
   $('explodeBtn').onclick = () => explodeSvg(activeNode());
 })();
