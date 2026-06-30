@@ -295,6 +295,23 @@
       </div>
     </div>
     <div class="section">
+      <h2>断面表示</h2>
+      <div class="muted" style="margin-bottom:8px">輪切りにして内部（厚みや空洞）を確認できます。STL書き出しには影響しません。</div>
+      <button id="sectionBtn" style="width:100%; margin-bottom:8px">✂ 断面を表示</button>
+      <div id="sectionCtrl" style="display:none">
+        <div class="muted" style="margin:4px 0 3px">切る向き</div>
+        <div class="grid3" style="margin-bottom:8px">
+          <button data-saxis="x">X</button><button data-saxis="y" class="active">Y</button><button data-saxis="z">Z</button>
+        </div>
+        <div class="row">
+          <label>位置</label>
+          <input type="range" id="sectionPos" min="-100" max="100" step="1" value="0" style="flex:1; min-width:0;">
+          <span id="sectionPosVal" class="muted" style="width:52px; text-align:right; font-size:12px; flex-shrink:0;">0 mm</span>
+        </div>
+        <button id="sectionFlip" style="width:100%; margin-top:6px">⇄ 反対側を切る</button>
+      </div>
+    </div>
+    <div class="section">
       <h2>サイズの目安</h2>
       <div class="muted">単位は <b>1 = 1mm</b>。グリッド1マス = 10mm。3Dでクリックすると結合形状全体を選択、中の図形は左の構造ツリーから選びます。</div>
     </div>
@@ -415,6 +432,7 @@ const model = new THREE.Group();   scene.add(model);
 const display = new THREE.Group();  scene.add(display);
 const edgeGroup = new THREE.Group(); scene.add(edgeGroup);   // 形の輪郭線（選択や計測には含めない）
 const highlightGroup = new THREE.Group(); scene.add(highlightGroup);
+const sectionPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0);   // 断面表示用クリッピング平面（既定では無効）
 
 // ============================================================
 //  Undo / Redo
@@ -976,10 +994,10 @@ function clearGroup(g) {
   }
 }
 
-// 図形の本体マテリアル（透明度に対応）
+// 図形の本体マテリアル（透明度に対応）。断面表示で切った面の内側が見えるよう両面描画にする。
 function bodyMaterial(node) {
   const op = node.userData.opacity == null ? 1 : node.userData.opacity;
-  const mat = new THREE.MeshStandardMaterial({ color: node.userData.color, roughness: 0.55, metalness: 0.05 });
+  const mat = new THREE.MeshStandardMaterial({ color: node.userData.color, roughness: 0.55, metalness: 0.05, side: THREE.DoubleSide, clippingPlanes: [sectionPlane], clipShadows: true });
   if (op < 1) { mat.transparent = true; mat.opacity = op; mat.depthWrite = false; }
   return mat;
 }
@@ -995,7 +1013,7 @@ function buildDisplay(node, topId) {
   // 形の境目に輪郭線を描く（平らな面でも形が分かるように）。30°以上の角だけ線にする
   const edges = new THREE.LineSegments(
     new THREE.EdgesGeometry(geom, 30),
-    new THREE.LineBasicMaterial({ color: 0x101216, transparent: true, opacity: 0.5 })
+    new THREE.LineBasicMaterial({ color: 0x101216, transparent: true, opacity: 0.5, clippingPlanes: [sectionPlane] })
   );
   edges.userData.topId = topId;
   edgeGroup.add(edges);
@@ -1006,6 +1024,7 @@ function doRebuild() {
   for (const node of childNodes(model)) buildDisplay(node, node.userData.id);
   updateHighlight();
   updateMeasure();
+  if (sectionEnabled) refreshSectionRange(false);
 }
 
 // signed-volume sum over triangles → mm³ (geometry is already world-baked)
@@ -1102,7 +1121,7 @@ function updateHighlight() {
     const geo = evalGeometry(node); if (!geo) return;
     const edges = new THREE.EdgesGeometry(geo, 25); geo.dispose();
     const isActive = node === activeNode();
-    const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: isActive ? 0xffffff : 0xffc24f, depthTest: false, transparent: true }));
+    const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: isActive ? 0xffffff : 0xffc24f, depthTest: false, transparent: true, clippingPlanes: [sectionPlane] }));
     line.renderOrder = 999;
     highlightGroup.add(line);
   });
@@ -1620,6 +1639,62 @@ $('snapBtn').onclick = () => {
 };
 $('snapSize').onchange = applySnap;
 $('snapAngle').onchange = applySnap;
+
+// ============================================================
+//  断面表示（クリッピング平面で輪切りにする。STL書き出しなどジオメトリ自体は変えない）
+// ============================================================
+let sectionEnabled = false, sectionAxis = 'y', sectionFlip = false;
+function sectionAxisVec(axis) {
+  return axis === 'x' ? new THREE.Vector3(1, 0, 0) : axis === 'z' ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(0, 1, 0);
+}
+function applySectionPlane(pos) {
+  const v = sectionAxisVec(sectionAxis);
+  if (sectionFlip) { sectionPlane.normal.copy(v); sectionPlane.constant = -pos; }
+  else { sectionPlane.normal.copy(v).negate(); sectionPlane.constant = pos; }
+}
+// 表示中のモデル全体から、選んだ軸の外接ボックス範囲を求める（スライダーの可動域に使う）
+function sectionRangeForAxis(axis) {
+  if (!display.children.length) return { min: -50, max: 50 };
+  const box = new THREE.Box3();
+  display.children.forEach(m => { if (!m.geometry.boundingBox) m.geometry.computeBoundingBox(); box.union(m.geometry.boundingBox); });
+  const margin = Math.max(1, (box.max[axis] - box.min[axis]) * 0.05);
+  return { min: box.min[axis] - margin, max: box.max[axis] + margin };
+}
+function refreshSectionRange(resetValue) {
+  const r = sectionRangeForAxis(sectionAxis);
+  const slider = $('sectionPos');
+  slider.min = r.min; slider.max = r.max;
+  slider.step = Math.max(0.1, Math.round((r.max - r.min) / 2) / 100);
+  if (resetValue) slider.value = (r.min + r.max) / 2;
+  const v = Math.min(r.max, Math.max(r.min, parseFloat(slider.value)));
+  slider.value = v;
+  $('sectionPosVal').textContent = (Math.round(v * 10) / 10) + ' mm';
+  applySectionPlane(v);
+}
+function setSectionEnabled(on) {
+  sectionEnabled = on;
+  renderer.localClippingEnabled = on;
+  $('sectionBtn').classList.toggle('active', on);
+  $('sectionBtn').textContent = on ? '✂ 断面を解除' : '✂ 断面を表示';
+  $('sectionCtrl').style.display = on ? '' : 'none';
+  if (on) refreshSectionRange(true);
+}
+$('sectionBtn').onclick = () => setSectionEnabled(!sectionEnabled);
+document.querySelectorAll('[data-saxis]').forEach(b => b.onclick = () => {
+  sectionAxis = b.dataset.saxis;
+  document.querySelectorAll('[data-saxis]').forEach(x => x.classList.toggle('active', x === b));
+  refreshSectionRange(true);
+});
+$('sectionPos').oninput = () => {
+  const v = parseFloat($('sectionPos').value);
+  $('sectionPosVal').textContent = (Math.round(v * 10) / 10) + ' mm';
+  applySectionPlane(v);
+};
+$('sectionFlip').onclick = () => {
+  sectionFlip = !sectionFlip;
+  $('sectionFlip').classList.toggle('active', sectionFlip);
+  applySectionPlane(parseFloat($('sectionPos').value));
+};
 
 window.addEventListener('keydown', e => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
