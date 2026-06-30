@@ -309,6 +309,9 @@
           <span id="sectionPosVal" class="muted" style="width:52px; text-align:right; font-size:12px; flex-shrink:0;">0 mm</span>
         </div>
         <button id="sectionFlip" style="width:100%; margin-top:6px">⇄ 反対側を切る</button>
+        <div class="divider"></div>
+        <div class="muted" style="margin-bottom:8px">選択中の図形を、この断面の位置で実際に2つの形に切り分けます。</div>
+        <button id="cutBtn" class="primary" style="width:100%">✂ ここでカットする</button>
       </div>
     </div>
     <div class="section">
@@ -950,11 +953,9 @@ function computeCreasedNormals(geometry, creaseAngle) {
   return g;
 }
 
-function evalGeometry(node) {
-  if (!manifoldReady) return null;
-  let man;
-  try { man = nodeToManifold(node); } catch (e) { console.error(e); return null; }
-  if (!man) return null;
+// Manifold（worldスペース） → THREE.BufferGeometry。中身が無ければ null。
+// 呼び出し側が man の delete() を行う（このまま使い回せるように）。
+function manifoldToGeometry(man) {
   let geo = null;
   try {
     const m = man.getMesh();
@@ -972,7 +973,16 @@ function evalGeometry(node) {
       geo.computeBoundingBox();
     }
   } catch (e) { console.error(e); }
-  if (man) man.delete();
+  return geo;
+}
+
+function evalGeometry(node) {
+  if (!manifoldReady) return null;
+  let man;
+  try { man = nodeToManifold(node); } catch (e) { console.error(e); return null; }
+  if (!man) return null;
+  const geo = manifoldToGeometry(man);
+  man.delete();
   return geo;
 }
 
@@ -1250,6 +1260,50 @@ function hollowSelected() {
   selectNode(inner);
   requestRebuild();
   toast(`中空化しました（壁${round(t)}mm）。内側を選べば厚みや深さを微調整できます`);
+}
+
+// ============================================================
+//  断面の位置で実際に切り分ける（選択中の図形を2つの独立した形に分割）
+// ============================================================
+function cutSelected() {
+  const a = activeNode();
+  if (!a) { toast('カットする図形を選んでください', true); return; }
+  if (!manifoldReady) { toast('演算エンジンを準備中です。少し待ってから試してください', true); return; }
+  if (!sectionEnabled) { toast('先に「断面を表示」をオンにしてください', true); return; }
+  let man = null;
+  try { man = nodeToManifold(a); } catch (e) { console.error(e); }
+  if (!man) { toast('カットできる形がありません', true); return; }
+  // sectionPlane（THREE.Plane: n·p + c ≧ 0 が表示側）と Manifold（n·p ≧ offset が残る側）の符号合わせ
+  const normal = [sectionPlane.normal.x, sectionPlane.normal.y, sectionPlane.normal.z];
+  const offset = -sectionPlane.constant;
+  let parts = null;
+  try { parts = man.splitByPlane(normal, offset); } catch (e) { console.error(e); }
+  man.delete();
+  if (!parts) { toast('カットに失敗しました', true); return; }
+  const pieces = [];
+  parts.forEach(p => { const geo = manifoldToGeometry(p); if (geo) pieces.push(geo); p.delete(); });
+  if (pieces.length < 2) { toast('この位置では切り分けられませんでした。断面の位置を図形にかかるよう調整してください', true); return; }
+  pushUndo();
+  const baseName = a.userData.name, baseColor = a.userData.color, opacity = a.userData.opacity;
+  const suffix = [' (カットA)', ' (カットB)'];
+  const made = pieces.map((geo, i) => {
+    const ctr = new THREE.Vector3(); geo.boundingBox.getCenter(ctr);
+    geo.translate(-ctr.x, -ctr.y, -ctr.z);   // パーツ自身の中心を原点に（ギズモが中心に来るように）
+    geo.computeBoundingBox();
+    const n = newMesh(geo, baseName);
+    n.userData.name = baseName + suffix[i];
+    n.userData.color = baseColor;
+    if (opacity != null) n.userData.opacity = opacity;
+    n.position.copy(ctr);                    // worldスペースで焼き込み済みなので、modelの直下ならそのまま位置になる
+    model.add(n);
+    return n;
+  });
+  a.parent.remove(a);
+  selected = made.slice();
+  const act = activeNode();
+  if (act) transform.attach(act); else transform.detach();
+  renderTree(); refreshProps(); updateBoolButtons(); updateHighlight(); updateMeasure(); requestRebuild();
+  toast('2つに切り分けました（それぞれ個別に編集・移動できます）');
 }
 
 // ============================================================
@@ -1695,6 +1749,7 @@ $('sectionFlip').onclick = () => {
   $('sectionFlip').classList.toggle('active', sectionFlip);
   applySectionPlane(parseFloat($('sectionPos').value));
 };
+$('cutBtn').onclick = cutSelected;
 
 window.addEventListener('keydown', e => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
