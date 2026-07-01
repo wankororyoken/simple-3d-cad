@@ -311,6 +311,13 @@
         <button id="sectionFlip" style="width:100%; margin-top:6px">⇄ 反対側を切る</button>
         <div class="divider"></div>
         <div class="muted" style="margin-bottom:8px">選択中の図形を、この断面の位置で実際に2つの形に切り分けます。</div>
+        <label style="display:flex; align-items:center; gap:8px; margin-bottom:8px; cursor:pointer; user-select:none;">
+          <input type="checkbox" id="cutDowel" style="width:auto;" /> はめ込みダボを付ける
+        </label>
+        <div id="cutDowelOpts" style="display:none">
+          <div class="row"><label>すきま</label><input type="number" id="cutGap" min="0" step="0.05" value="0.2" style="flex:1; min-width:0;"><span class="muted" style="width:28px; flex-shrink:0;">mm</span></div>
+          <div class="muted" style="margin:-4px 0 10px">カット面にピンと受け穴が付き、プラモデルのように差し込んで組めます。部品を別々の色で印刷すれば、単色プリンタでも多色の作品が作れます。すきまは0.1〜0.2mmがきつめ、0.3〜0.4mmがゆるめの目安です。</div>
+        </div>
         <button id="cutBtn" class="primary" style="width:100%">✂ ここでカットする</button>
       </div>
     </div>
@@ -1324,6 +1331,41 @@ function doHollow(wall, lidOpts) {
 // ============================================================
 //  断面の位置で実際に切り分ける（選択中の図形を2つの独立した形に分割）
 // ============================================================
+// カット面にはめ込みダボ（ピンと受け穴）を付ける。parts[0]=ピン側、parts[1]=穴側として差し替える。
+// gap = ピンと穴の片側すきま(mm)。戻り値 = 付けたピンの本数（0なら面が狭い等で付けられず、カットのみ成立）。
+function addCutDowels(parts, normal, offset, gap) {
+  const AX = normal[0] !== 0 ? 0 : normal[1] !== 0 ? 1 : 2;   // 断面はXYZ軸のどれかに直交
+  const s = normal[AX] >= 0 ? 1 : -1;
+  const planeCoord = s * offset;                              // 断面のワールド座標（軸上の位置）
+  // ピン側のカット面近くの薄い層（0.5mm）の外接ボックスから、面の広がりを調べる
+  const slab = parts[0].trimByPlane(normal.map(v => -v), -(offset + 0.5));
+  const bb = slab.boundingBox(); slab.delete();
+  if (!isFinite(bb.min[0])) return 0;
+  const [U, V] = [0, 1, 2].filter(i => i !== AX);
+  const su = bb.max[U] - bb.min[U], sv = bb.max[V] - bb.min[V];
+  if (Math.min(su, sv) < 4) return 0;                         // 面が細すぎてピンを置けない
+  const cu = (bb.max[U] + bb.min[U]) / 2, cv = (bb.max[V] + bb.min[V]) / 2;
+  const r = Math.min(3, Math.max(1, Math.min(su, sv) / 6));   // ピン半径：面の狭い辺の1/6（1〜3mm）
+  const longSize = Math.max(su, sv);
+  const offs = longSize >= 8 * r ? [-longSize / 4, longSize / 4] : [0];   // 広い面は2本（回転止め）、狭ければ中央に1本
+  const embed = 4, protrude = 4;                              // ピンの埋め込み・突き出し長さ(mm)
+  let count = 0;
+  for (const off of offs) {
+    const u = su >= sv ? cu + off : cu, v = su >= sv ? cv : cv + off;
+    const place = (cyl, baseCoord) => {                       // +Z向きの円柱を断面の軸に向けて配置
+      let c = AX === 0 ? cyl.rotate(0, 90, 0) : AX === 1 ? cyl.rotate(-90, 0, 0) : cyl;
+      if (c !== cyl) cyl.delete();
+      const t = [0, 0, 0]; t[AX] = baseCoord; t[U] = u; t[V] = v;
+      const moved = c.translate(t); c.delete(); return moved;
+    };
+    const pin = place(Manifold.cylinder(embed + protrude, r, r, 32), planeCoord - (s > 0 ? protrude : embed));
+    let m = Manifold.union(parts[0], pin); parts[0].delete(); pin.delete(); parts[0] = m;
+    const hole = place(Manifold.cylinder(protrude + gap + 0.1, r + gap, r + gap, 32), s > 0 ? planeCoord - protrude - gap : planeCoord - 0.1);
+    m = Manifold.difference(parts[1], hole); parts[1].delete(); hole.delete(); parts[1] = m;
+    count++;
+  }
+  return count;
+}
 function cutSelected() {
   const a = activeNode();
   if (!a) { toast('カットする図形を選んでください', true); return; }
@@ -1339,12 +1381,18 @@ function cutSelected() {
   try { parts = man.splitByPlane(normal, offset); } catch (e) { console.error(e); }
   man.delete();
   if (!parts) { toast('カットに失敗しました', true); return; }
+  const wantDowel = $('cutDowel').checked;
+  let dowels = 0;
+  if (wantDowel && parts.length === 2) {
+    const gap = Math.max(0, parseFloat($('cutGap').value) || 0);
+    try { dowels = addCutDowels(parts, normal, offset, gap); } catch (e) { console.error(e); }
+  }
   const pieces = [];
   parts.forEach(p => { const geo = manifoldToGeometry(p); if (geo) pieces.push(geo); p.delete(); });
   if (pieces.length < 2) { toast('この位置では切り分けられませんでした。断面の位置を図形にかかるよう調整してください', true); return; }
   pushUndo();
   const baseName = a.userData.name, baseColor = a.userData.color, opacity = a.userData.opacity;
-  const suffix = [' (カットA)', ' (カットB)'];
+  const suffix = dowels > 0 ? [' (カットA・ピン側)', ' (カットB・穴側)'] : [' (カットA)', ' (カットB)'];
   const made = pieces.map((geo, i) => {
     const ctr = new THREE.Vector3(); geo.boundingBox.getCenter(ctr);
     geo.translate(-ctr.x, -ctr.y, -ctr.z);   // パーツ自身の中心を原点に（ギズモが中心に来るように）
@@ -1362,7 +1410,9 @@ function cutSelected() {
   const act = activeNode();
   if (act) transform.attach(act); else transform.detach();
   renderTree(); refreshProps(); updateBoolButtons(); updateHighlight(); updateMeasure(); requestRebuild();
-  toast('2つに切り分けました（それぞれ個別に編集・移動できます）');
+  toast(dowels > 0 ? `2つに切り分け、はめ込みダボを${dowels}本付けました（差し込んで組めます）`
+      : wantDowel ? '2つに切り分けました（カット面が狭いためダボは付けられませんでした）'
+      : '2つに切り分けました（それぞれ個別に編集・移動できます）');
 }
 
 // ============================================================
@@ -1830,6 +1880,7 @@ $('sectionFlip').onclick = () => {
   applySectionPlane(parseFloat($('sectionPos').value));
 };
 $('cutBtn').onclick = cutSelected;
+$('cutDowel').onchange = () => { $('cutDowelOpts').style.display = $('cutDowel').checked ? '' : 'none'; };
 
 window.addEventListener('keydown', e => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
@@ -1857,10 +1908,20 @@ window.addEventListener('keydown', e => {
 const exporter = new STLExporter();
 $('exportBtn').onclick = async () => {
   if (!display.children.length) { toast('書き出す図形がありません', true); return; }
-  const data = exporter.parse(display, { binary: true });
+  // 一部の図形だけ選択中なら「選択だけ書き出すか」を確認（部品ごとに別ファイルで印刷したい時用）
+  let target = display, selOnly = false;
+  const tops = new Set(selected.map(topAncestor).filter(Boolean).map(n => n.userData.id));
+  if (tops.size && tops.size < childNodes(model).length &&
+      confirm('選択中の図形だけを書き出しますか？\n\n「OK」＝選択中のみ（部品ごとに別ファイルにしたい時）\n「キャンセル」＝全体をまとめて書き出す')) {
+    target = new THREE.Group();
+    display.children.forEach(m => { if (tops.has(m.userData.topId)) target.add(m.clone()); });
+    target.updateMatrixWorld(true);
+    selOnly = true;
+  }
+  const data = exporter.parse(target, { binary: true });
   const blob = new Blob([data], { type: 'application/octet-stream' });
   const result = await saveBlob(blob, 'model.stl', { description: 'STL 3Dモデル', accept: { 'model/stl': ['.stl'] } });
-  if (result) toast(result.name + ' を書き出しました');
+  if (result) toast(result.name + ' を書き出しました' + (selOnly ? '（選択中の図形のみ）' : ''));
 };
 
 // ============================================================
