@@ -1856,8 +1856,8 @@ $('exportBtn').onclick = async () => {
   if (!display.children.length) { toast('書き出す図形がありません', true); return; }
   const data = exporter.parse(display, { binary: true });
   const blob = new Blob([data], { type: 'application/octet-stream' });
-  const saved = await saveBlob(blob, 'model.stl', { description: 'STL 3Dモデル', accept: { 'model/stl': ['.stl'] } });
-  if (saved) toast(saved + ' を書き出しました');
+  const result = await saveBlob(blob, 'model.stl', { description: 'STL 3Dモデル', accept: { 'model/stl': ['.stl'] } });
+  if (result) toast(result.name + ' を書き出しました');
 };
 
 // ============================================================
@@ -2001,15 +2001,41 @@ $('traceGo').onclick = () => {
   } catch (err) { console.error(err); toast('トレースに失敗しました', true); }
 };
 
+let currentFileHandle = null;   // 読み込み／保存した JSON ファイルのハンドル。次回の保存で同じファイルへ上書きする。
+
 $('saveBtn').onclick = async () => {
   const data = { v: 2, model: childNodes(model).map(serialize) };
   const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
-  const saved = await saveBlob(blob, 'design.json', { description: '3D CAD 編集用データ', accept: { 'application/json': ['.json'] } });
-  if (saved) toast(saved + ' を保存しました');
+  const result = await saveBlob(blob, 'design.json', { description: '3D CAD 編集用データ', accept: { 'application/json': ['.json'] } }, currentFileHandle);
+  if (result) {
+    currentFileHandle = result.handle;   // 対応ブラウザ以外や失敗時は null（次回また名前を聞く）
+    toast(result.overwrote ? result.name + ' に上書き保存しました' : result.name + ' を保存しました');
+  }
 };
-$('loadBtn').onclick = () => $('fileInput').click();
+$('loadBtn').onclick = async () => {
+  // 対応ブラウザ（Chrome等）はファイルハンドルを覚えておき、次回の保存でそのファイルに上書きできるようにする
+  if (window.showOpenFilePicker) {
+    let handle;
+    try {
+      [handle] = await window.showOpenFilePicker({ types: [{ description: '3D CAD 編集用データ', accept: { 'application/json': ['.json'] } }] });
+    } catch (e) { if (e.name !== 'AbortError') console.error(e); return; }   // キャンセル/失敗時は何もしない
+    try {
+      const file = await handle.getFile();
+      const data = JSON.parse(await file.text());
+      pushUndo();
+      clearGroup(model); uid = 0; counter = 0; selectNode(null);
+      (data.model || []).forEach(o => model.add(deserialize(o)));
+      counter = uid;
+      currentFileHandle = handle;
+      renderTree(); requestRebuild(); toast(file.name + ' を読み込みました');
+    } catch (err) { console.error(err); toast('読み込みに失敗しました', true); }
+    return;
+  }
+  $('fileInput').click();   // 非対応ブラウザ用フォールバック（上書き保存はできない）
+};
 $('fileInput').onchange = e => {
   const f = e.target.files[0]; if (!f) return;
+  currentFileHandle = null;   // <input> 経由はファイルハンドルを取得できないため、次回保存は名前を付けて保存になる
   const reader = new FileReader();
   reader.onload = () => {
     try {
@@ -2029,10 +2055,29 @@ function download(blob, name) {
   a.href = URL.createObjectURL(blob); a.download = name; a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
-// 保存名・場所を選ぶダイアログを出して保存する。
+// ファイルハンドルへの書き込み権限を確認し、なければ求める。
+async function ensureWritePermission(handle) {
+  const opts = { mode: 'readwrite' };
+  if ((await handle.queryPermission(opts)) === 'granted') return true;
+  return (await handle.requestPermission(opts)) === 'granted';
+}
+// 保存する。existingHandle があれば、まずそのファイルへの上書きを試みる。
 // 対応ブラウザ(Chrome等)は OS のネイティブ保存ダイアログ、非対応はファイル名入力で代替。
-// 戻り値: 保存したファイル名（キャンセル時は null）
-async function saveBlob(blob, suggestedName, fileType) {
+// 戻り値: { name, handle, overwrote }（handleは対応ブラウザのみ。キャンセル時は null）
+async function saveBlob(blob, suggestedName, fileType, existingHandle) {
+  if (existingHandle) {
+    try {
+      if (await ensureWritePermission(existingHandle)) {
+        const w = await existingHandle.createWritable();
+        await w.write(blob);
+        await w.close();
+        return { name: existingHandle.name, handle: existingHandle, overwrote: true };
+      }
+    } catch (e) {
+      if (e.name === 'AbortError') return null;   // ユーザーがキャンセル
+      // 権限エラー等は下の「名前を付けて保存」にフォールバック
+    }
+  }
   if (window.showSaveFilePicker) {
     try {
       const handle = await window.showSaveFilePicker({
@@ -2042,7 +2087,7 @@ async function saveBlob(blob, suggestedName, fileType) {
       const w = await handle.createWritable();
       await w.write(blob);
       await w.close();
-      return handle.name;
+      return { name: handle.name, handle, overwrote: false };
     } catch (e) {
       if (e.name === 'AbortError') return null;   // ユーザーがキャンセル
       // それ以外のエラーは従来のダウンロードにフォールバック
@@ -2052,7 +2097,7 @@ async function saveBlob(blob, suggestedName, fileType) {
   if (name === null) return null;                 // キャンセル
   name = name.trim() || suggestedName;
   download(blob, name);
-  return name;
+  return { name, handle: null, overwrote: false };
 }
 
 // ============================================================
