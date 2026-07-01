@@ -1276,10 +1276,13 @@ function makeLid(node, wall, gap, capH, plugH) {
     plugNode = newPrimitive('cylinder'); plugNode.userData.params = { r: plugR, h: plugH, seg: p.seg || 48, fillet: 0 };
     outerSize = outerR * 2;
   } else {
+    // 元の形の角丸め半径（box=fillet、roundedprism=r）をキャップ／プラグにも引き継ぐ。
+    // キャップ／プラグは roundedprism（上下面は平ら・XZ方向の角だけ丸める）で作る＝スタックできる形。
+    const r0 = node.userData.type === 'roundedprism' ? (p.r || 0) : (p.fillet || 0);
     const plugW = p.w - 2 * wall - 2 * gap, plugD = p.d - 2 * wall - 2 * gap;
     if (plugW <= 0.4 || plugD <= 0.4) return null;
-    capNode = newPrimitive('box'); capNode.userData.params = { w: p.w, h: capH, d: p.d, fillet: 0 };
-    plugNode = newPrimitive('box'); plugNode.userData.params = { w: plugW, h: plugH, d: plugD, fillet: 0 };
+    capNode = newPrimitive('roundedprism'); capNode.userData.params = { w: p.w, h: capH, d: p.d, r: r0 };
+    plugNode = newPrimitive('roundedprism'); plugNode.userData.params = { w: plugW, h: plugH, d: plugD, r: Math.max(0, r0 - gap) };
     outerSize = Math.max(p.w, p.d);
   }
   const over = 0.4;                                   // キャップとプラグの継ぎ目を確実に溶着させる重なり
