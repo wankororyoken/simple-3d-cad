@@ -179,6 +179,7 @@
         <button id="opSubtract" disabled>くり抜き −</button>
         <button id="opIntersect" disabled>共通 ∩</button>
       </div>
+      <button id="dowelBtn" disabled style="width:100%; margin-top:8px" title="接している2つの図形に、はめ込み用のピンと受け穴を付ける（別々の色で印刷して組み立てる用）">◎ ダボで接続（はめ込みピンと穴）</button>
     </div>
     <div class="section">
       <h2>整列・グループ</h2>
@@ -1466,14 +1467,83 @@ function groupSelected() {
   selectNode(g); requestRebuild();
   toast('グループ化しました（まとめて移動できます）');
 }
+
+// ============================================================
+//  ダボ接続：接している2つの図形に、はめ込み用のピン（合体）と受け穴（くり抜き）を付ける。
+//  ピン・穴は円柱プリミティブとしてツリーに入るので、あとから位置や太さを調整できる。
+//  先に選んだ方＝ピン側、後に選んだ方＝穴側。
+// ============================================================
+function dowelConnect() {
+  if (selected.length !== 2 || !sameParent()) { toast('同じ階層の図形を2つ選んでください', true); return; }
+  const [A, B] = selected;
+  const boxA = nodeWorldBox(A), boxB = nodeWorldBox(B);
+  if (!boxA || !boxB) { toast('接続できませんでした', true); return; }
+  // 接触している軸 = 2つの範囲の重なりが最も薄い軸（接していれば重なり≈0）
+  const axes = ['x', 'y', 'z'];
+  let ax = 'y', best = Infinity;
+  for (const k of axes) {
+    const ov = Math.min(boxA.max[k], boxB.max[k]) - Math.max(boxA.min[k], boxB.min[k]);
+    if (ov < best) { best = ov; ax = k; }
+  }
+  if (best < -0.5) { toast('図形が離れています。2つをくっつけて置いてから実行してください', true); return; }
+  const planeCoord = (Math.max(boxA.min[ax], boxB.min[ax]) + Math.min(boxA.max[ax], boxB.max[ax])) / 2;   // 接触面の位置
+  const [U, V] = axes.filter(k => k !== ax);
+  const lo = k => Math.max(boxA.min[k], boxB.min[k]), hi = k => Math.min(boxA.max[k], boxB.max[k]);
+  const su = hi(U) - lo(U), sv = hi(V) - lo(V);                 // 接触面の広がり（両方の外接ボックスの重なり）
+  if (Math.min(su, sv) < 4) { toast('接する面が狭すぎてダボを置けません', true); return; }
+  const input = prompt('ピンと穴のすきま（mm）を入力してください\n（0.1〜0.2＝きつめ ／ 0.3〜0.4＝ゆるめ）', '0.2');
+  if (input === null) return;
+  const gap = Math.max(0, parseFloat(input) || 0);
+  const cu = (lo(U) + hi(U)) / 2, cv = (lo(V) + hi(V)) / 2;
+  const r = Math.min(3, Math.max(1, Math.min(su, sv) / 6));     // ピン半径：面の狭い辺の1/6（1〜3mm）
+  const longSize = Math.max(su, sv);
+  const offs = longSize >= 8 * r ? [-longSize / 4, longSize / 4] : [0];   // 広い面は2本（回転止め）、狭ければ中央に1本
+  pushUndo();
+  // 接触面の中心に置く円柱（ピン/穴）。断面の軸に合わせて回転させる
+  const mkCyl = (rad, h, u, v, name) => {
+    const p = newPrimitive('cylinder');
+    p.userData.params = { r: rad, h, seg: 32, fillet: 0 };
+    p.userData.name = name;
+    p.position[ax] = planeCoord; p.position[U] = u; p.position[V] = v;
+    if (ax === 'x') p.rotation.z = Math.PI / 2;
+    else if (ax === 'z') p.rotation.x = Math.PI / 2;
+    return p;
+  };
+  const parent = A.parent;
+  const wrap = (node, op, kids, label) => {
+    const g = newGroup(op);
+    g.userData.color = node.userData.color;
+    g.userData.name = node.userData.name + label;
+    parent.add(g);
+    g.attach(node);                       // ワールド位置を保ったままグループへ
+    kids.forEach(k => g.add(k));          // グループはこの時点で無変換なので、ワールド座標のまま入れられる
+    centerGroupPivot(g);
+    return g;
+  };
+  const pins = [], holes = [];
+  offs.forEach((off, i) => {
+    const u = su >= sv ? cu + off : cu, v = su >= sv ? cv : cv + off;
+    const sfx = offs.length > 1 ? ' ' + (i + 1) : '';
+    pins.push(mkCyl(r, 8, u, v, 'ダボピン' + sfx));                       // 4mm埋め込み＋4mm突き出し
+    holes.push(mkCyl(r + gap, 8 + 2 * gap, u, v, 'ダボ穴' + sfx));        // すきま分大きく・深く
+  });
+  const gA = wrap(A, 'union', pins, '（ピン側）');
+  const gB = wrap(B, 'subtract', holes, '（穴側）');
+  selected = [gA, gB];
+  transform.attach(gB);
+  renderTree(); refreshProps(); updateBoolButtons(); updateHighlight(); updateMeasure(); requestRebuild();
+  toast(`ダボ${offs.length}本で接続しました（${A.userData.name}にピン、${B.userData.name}に穴）。ピン・穴はツリーから調整できます`);
+}
 document.getElementById('opUnion').onclick = () => combine('union');
 document.getElementById('opSubtract').onclick = () => combine('subtract');
 document.getElementById('opIntersect').onclick = () => combine('intersect');
+document.getElementById('dowelBtn').onclick = dowelConnect;
 function updateBoolButtons() {
   const sib = sameParent();
   const multi = selected.length >= 2;
   ['opUnion', 'opSubtract', 'opIntersect'].forEach(id => document.getElementById(id).disabled = !sib);
   document.getElementById('groupBtn').disabled = !sib;
+  document.getElementById('dowelBtn').disabled = !(sib && selected.length === 2);
   document.querySelectorAll('[data-align]').forEach(b => b.disabled = !multi);
   document.querySelectorAll('[data-dist]').forEach(b => b.disabled = selected.length < 3);
 }
