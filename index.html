@@ -277,7 +277,7 @@
         <button id="delBtn" class="danger">削除</button>
       </div>
       <button id="dropBtn" title="底面をXZ平面(テーブル)に合わせる" style="margin-top:6px; width:100%">⤓ テーブルに置く</button>
-      <button id="hollowBtn" title="壁の厚みを残して中をくり抜く（コップ・容器に）" style="display:none; margin-top:6px; width:100%">🥤 中空化（コップ状に）</button>
+      <button id="hollowBtn" title="壁の厚みを残して中をくり抜く（コップ状・筒状）" style="display:none; margin-top:6px; width:100%">🥤 中空化</button>
       <button id="ungroupBtn" style="display:none; margin-top:6px; width:100%">結合を解除（中の図形に分解）</button>
       <button id="explodeBtn" title="読み込んだ図形を、形ごとの独立オブジェクトに分けます" style="display:none; margin-top:6px; width:100%">✂ パーツに分解（バラバラにする）</button>
     </div>
@@ -336,9 +336,15 @@
 
 <div id="hollowModal" class="modal-overlay" style="display:none">
   <div class="modal" style="width:380px">
-    <h3>中空化（コップ状に）</h3>
+    <h3>中空化</h3>
+    <div class="row"><label>形</label>
+      <select id="hwShape" style="flex:1; min-width:0;">
+        <option value="cup">コップ状（底あり・上だけ開く）</option>
+        <option value="tube">筒状（両端が開く・パイプ）</option>
+      </select>
+    </div>
     <div class="row"><label>壁の厚み</label><input type="number" id="hwWall" min="0.4" step="0.1" value="2" style="flex:1; min-width:0;"><span class="muted" style="width:28px; flex-shrink:0;">mm</span></div>
-    <div class="muted" style="margin:-4px 0 14px">側面・底とも同じ厚みになります。</div>
+    <div class="muted" id="hwWallHint" style="margin:-4px 0 14px">側面・底とも同じ厚みになります。</div>
     <label style="display:flex; align-items:center; gap:8px; margin-bottom:10px; cursor:pointer; user-select:none;">
       <input type="checkbox" id="hwLid" style="width:auto;" /> はめ込み式のフタも作成する
     </label>
@@ -1248,8 +1254,8 @@ function dropToBed() {
 //  中空化（シェル）：選択した柱状の図形を、壁の厚みを残してくり抜く
 // ============================================================
 const HOLLOW_TYPES = new Set(['cylinder', 'taper', 'box', 'roundedprism']);
-// 内側にくり抜く図形（クローン）を作る。失敗時は null。
-function makeInner(node, wall, floor) {
+// 内側にくり抜く図形（クローン）を作る。through=true なら両端を開ける（筒状）。失敗時は null。
+function makeInner(node, wall, floor, through) {
   const p = node.userData.params;
   const inner = cloneNode(node);
   inner.userData.name = '内側（くり抜き）';
@@ -1262,9 +1268,14 @@ function makeInner(node, wall, floor) {
       if (ip.w <= 0 || ip.d <= 0) return null; break;
     default: return null;
   }
-  const over = 1;                       // 上面を確実に開けるための突き抜け量(mm)
-  ip.h = p.h - floor + over; if (ip.h <= 0) return null;
-  inner.position.y = node.position.y + (floor + over) / 2;   // 底をfloor残し、上面を開ける
+  const over = 1;                       // 端を確実に開けるための突き抜け量(mm)
+  if (through) {                        // 筒状：上下とも貫通させる。中身を全高＋両端はみ出しに
+    ip.h = p.h + 2 * over;
+    inner.position.y = node.position.y;   // 中央にそろえて両端を開ける
+  } else {                             // コップ状：底をfloor残し、上面だけ開ける
+    ip.h = p.h - floor + over; if (ip.h <= 0) return null;
+    inner.position.y = node.position.y + (floor + over) / 2;
+  }
   return inner;
 }
 // はめ込み式のフタを作る：キャップ(上面)＋プラグ(差し込み部)を合体した、独立した新しい図形（group）を返す。
@@ -1305,10 +1316,10 @@ function makeLid(node, wall, gap, capH, plugH) {
   g.position.set(node.position.x + outerSize + 15, 0, node.position.z);   // 容器の隣にテーブル設置の状態で配置
   return g;
 }
-function doHollow(wall, lidOpts) {
+function doHollow(wall, lidOpts, tube) {
   const a = activeNode();
   if (!a || a.userData.kind !== 'primitive' || !HOLLOW_TYPES.has(a.userData.type)) return;
-  const inner = makeInner(a, wall, wall);             // 壁=底=wall
+  const inner = makeInner(a, wall, wall, tube);       // 壁=底=wall（筒状なら底なし）
   if (!inner) { toast('壁が厚すぎます。もっと薄くしてください', true); return; }
   let lid = null;
   if (lidOpts) {
@@ -1326,7 +1337,8 @@ function doHollow(wall, lidOpts) {
   if (lid) parent.add(lid);
   selectNode(inner);
   requestRebuild();
-  toast(lid ? `中空化とフタを作成しました（壁${round(wall)}mm）` : `中空化しました（壁${round(wall)}mm）。内側を選べば厚みや深さを微調整できます`);
+  const shapeLabel = tube ? '筒状' : 'コップ状';
+  toast(lid ? `${shapeLabel}に中空化しフタを作成しました（壁${round(wall)}mm）` : `${shapeLabel}に中空化しました（壁${round(wall)}mm）。内側を選べば厚みや深さを微調整できます`);
 }
 
 // ============================================================
@@ -1859,9 +1871,15 @@ function bakeScale(node) {
     if (!a || a.userData.kind !== 'primitive' || !HOLLOW_TYPES.has(a.userData.type)) {
       toast('中空化できるのは 円柱・円錐台・直方体・角丸ボックス です', true); return;
     }
+    $('hwShape').value = 'cup'; $('hwWallHint').textContent = '側面・底とも同じ厚みになります。';
     $('hwWall').value = '2'; $('hwLid').checked = false; $('hwLidOpts').style.display = 'none';
     $('hwGap').value = '0.2'; $('hwCapH').value = '3'; $('hwPlugH').value = '6';
     $('hollowModal').style.display = 'flex';
+  };
+  $('hwShape').onchange = () => {
+    $('hwWallHint').textContent = $('hwShape').value === 'tube'
+      ? '両端が開いた筒になります。側面の厚みです（底はできません）。'
+      : '側面・底とも同じ厚みになります。';
   };
   $('hwLid').onchange = () => { $('hwLidOpts').style.display = $('hwLid').checked ? '' : 'none'; };
   $('hwCancel').onclick = () => $('hollowModal').style.display = 'none';
@@ -1873,8 +1891,9 @@ function bakeScale(node) {
       capH: Math.max(0.4, parseFloat($('hwCapH').value) || 3),
       plugH: Math.max(0.5, parseFloat($('hwPlugH').value) || 6),
     } : null;
+    const tube = $('hwShape').value === 'tube';
     $('hollowModal').style.display = 'none';
-    doHollow(wall, lidOpts);
+    doHollow(wall, lidOpts, tube);
   };
   $('ungroupBtn').onclick = ungroupSelected;
   $('explodeBtn').onclick = () => explodeSvg(activeNode());
