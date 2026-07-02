@@ -1760,12 +1760,37 @@ function refreshProps() {
   syncPanelFromNode(m);
 }
 
+// パネルの位置・回転は常に「ワールド座標（テーブル基準の実際の値）」で表示・編集する。
+// グループの中の図形をローカル値（親からの相対）で見せると、原点合わせのせいで0付近になり
+// 実際の場所と食い違って混乱するため。拡縮だけはローカルのまま（primitiveでは非表示）。
+function nodeWorldTransform(m) {
+  m.updateWorldMatrix(true, false);
+  const p = new THREE.Vector3(), q = new THREE.Quaternion(), s = new THREE.Vector3();
+  m.matrixWorld.decompose(p, q, s);
+  return { p, e: new THREE.Euler().setFromQuaternion(q, 'XYZ') };
+}
 function syncPanelFromNode(m) {
-  $('px').value = round(m.position.x); $('py').value = round(m.position.y); $('pz').value = round(m.position.z);
-  $('rx').value = round(THREE.MathUtils.radToDeg(m.rotation.x));
-  $('ry').value = round(THREE.MathUtils.radToDeg(m.rotation.y));
-  $('rz').value = round(THREE.MathUtils.radToDeg(m.rotation.z));
+  const { p, e } = nodeWorldTransform(m);
+  $('px').value = round(p.x); $('py').value = round(p.y); $('pz').value = round(p.z);
+  $('rx').value = round(THREE.MathUtils.radToDeg(e.x));
+  $('ry').value = round(THREE.MathUtils.radToDeg(e.y));
+  $('rz').value = round(THREE.MathUtils.radToDeg(e.z));
   $('sx').value = round(m.scale.x); $('sy').value = round(m.scale.y); $('sz').value = round(m.scale.z);
+}
+// ワールド座標での位置指定 → 親から見たローカル位置に変換して反映
+function setWorldPos(m, axis, v) {
+  const { p } = nodeWorldTransform(m);
+  p[axis] = v;
+  m.parent.updateWorldMatrix(true, false);
+  m.position.copy(m.parent.worldToLocal(p));
+}
+// パネルの回転欄（3つ）をワールド回転として読み、ローカル回転に変換して反映
+function setWorldRotFromPanel(m) {
+  const d = id => THREE.MathUtils.degToRad(parseFloat($(id).value) || 0);
+  const wq = new THREE.Quaternion().setFromEuler(new THREE.Euler(d('rx'), d('ry'), d('rz'), 'XYZ'));
+  const pq = new THREE.Quaternion();
+  m.parent.getWorldQuaternion(pq);
+  m.quaternion.copy(pq.invert().multiply(wq));
 }
 
 // 図形(プリミティブ)の拡縮(倍率)を実寸(幅・高さ・奥行など)に焼き込み、倍率を1に戻す。
@@ -1797,8 +1822,8 @@ function bakeScale(node) {
 (function bindInputs() {
   const undoOnFocus = el => el.addEventListener('focus', () => pushUndo());
   const map = [
-    ['px', (m,v)=>m.position.x=v], ['py', (m,v)=>m.position.y=v], ['pz', (m,v)=>m.position.z=v],
-    ['rx', (m,v)=>m.rotation.x=THREE.MathUtils.degToRad(v)], ['ry', (m,v)=>m.rotation.y=THREE.MathUtils.degToRad(v)], ['rz', (m,v)=>m.rotation.z=THREE.MathUtils.degToRad(v)],
+    ['px', (m,v)=>setWorldPos(m,'x',v)], ['py', (m,v)=>setWorldPos(m,'y',v)], ['pz', (m,v)=>setWorldPos(m,'z',v)],
+    ['rx', m=>setWorldRotFromPanel(m)], ['ry', m=>setWorldRotFromPanel(m)], ['rz', m=>setWorldRotFromPanel(m)],
     ['sx', (m,v)=>m.scale.x=v||0.001], ['sy', (m,v)=>m.scale.y=v||0.001], ['sz', (m,v)=>m.scale.z=v||0.001],
   ];
   map.forEach(([id, fn]) => {
