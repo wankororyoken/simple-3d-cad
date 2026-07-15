@@ -1380,10 +1380,14 @@ function addCutDowels(parts, normal, offset, gap) {
   return count;
 }
 function cutSelected() {
-  const a = activeNode();
+  let a = activeNode();
   if (!a) { toast('カットする図形を選んでください', true); return; }
   if (!manifoldReady) { toast('演算エンジンを準備中です。少し待ってから試してください', true); return; }
   if (!sectionEnabled) { toast('先に「断面を表示」をオンにしてください', true); return; }
+  // グループの中の図形（くり抜きの内側など）が選ばれていても、見えている図形全体をカットする。
+  // 中の図形だけ切ると、くり抜き部品がグループの外に出て実体として現れてしまうため。
+  const top = topAncestor(a);
+  if (top) a = top;
   let man = null;
   try { man = nodeToManifold(a); } catch (e) { console.error(e); }
   if (!man) { toast('カットできる形がありません', true); return; }
