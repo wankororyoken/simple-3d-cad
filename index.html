@@ -71,6 +71,7 @@
   .node-row:hover { background: var(--panel2); }
   .node-row.sel { background: #2b3a52; }
   .node-row.active { background: #34507a; }
+  .node-row.droptarget { outline: 1px dashed var(--accent); background: #2b3a52; }
   .node-row .twist { width: 14px; flex-shrink: 0; color: var(--muted); font-size: 10px; text-align: center; }
   .node-row .swatch { width: 12px; height: 12px; border-radius: 3px; flex-shrink: 0; }
   .node-row .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -204,6 +205,7 @@
     </div>
     <div class="section">
       <h2>構造ツリー</h2>
+      <div class="muted" style="margin-bottom:6px">行をドラッグして、グループの行に落とすとその中へ、何もない所に落とすと一番上の階層へ移動できます。</div>
       <ul id="tree"></ul>
     </div>
   </aside>
@@ -279,6 +281,7 @@
       <button id="dropBtn" title="底面をXZ平面(テーブル)に合わせる" style="margin-top:6px; width:100%">⤓ テーブルに置く</button>
       <button id="hollowBtn" title="壁の厚みを残して中をくり抜く（コップ状・筒状）" style="display:none; margin-top:6px; width:100%">🥤 中空化</button>
       <button id="ungroupBtn" style="display:none; margin-top:6px; width:100%">結合を解除（中の図形に分解）</button>
+      <button id="popOutBtn" title="このグループから外して、独立した図形に戻します（くり抜き役だった図形は実体に戻ります）" style="display:none; margin-top:6px; width:100%">⬆ グループから出す（独立させる）</button>
       <button id="explodeBtn" title="読み込んだ図形を、形ごとの独立オブジェクトに分けます" style="display:none; margin-top:6px; width:100%">✂ パーツに分解（バラバラにする）</button>
     </div>
     <div class="section">
@@ -1667,6 +1670,35 @@ function nudge(dx, dy, dz) {
 //  Tree UI
 // ============================================================
 const treeEl = document.getElementById('tree');
+
+// ノードを別の親へ移す（見た目の位置・向きは保つ）。グループから出す／別のグループへ入れる操作の共通処理。
+// くり抜き役だった図形をグループの外へ出すと、普通の実体の図形に戻る。
+function moveNode(node, newParent) {
+  if (!node || !newParent || node === newParent || node.parent === newParent) return false;
+  for (let p = newParent; p; p = p.parent) if (p === node) return false;   // 自分の子孫の中へは移せない（循環防止）
+  pushUndo();
+  const oldParent = node.parent;
+  newParent.updateWorldMatrix(true, false);
+  newParent.attach(node);                                // attach = ワールド変換を保ったまま親を変える
+  if (newParent !== model) newParent.userData.expanded = true;
+  // 空になったグループは自動で片づける
+  if (oldParent && oldParent !== model && oldParent.userData && oldParent.userData.kind === 'group' && !childNodes(oldParent).length) {
+    oldParent.parent.remove(oldParent);
+  }
+  selectNode(node);
+  requestRebuild();
+  return true;
+}
+
+let dragNodeId = null;   // ツリーでドラッグ中のノードid
+treeEl.addEventListener('dragover', e => { if (dragNodeId != null) e.preventDefault(); });
+treeEl.addEventListener('drop', e => {          // 行以外（余白）に落とす → 一番上の階層へ
+  e.preventDefault();
+  const d = dragNodeId != null ? findById(dragNodeId) : null;
+  dragNodeId = null;
+  if (d && moveNode(d, model)) toast('一番上の階層へ移動しました');
+});
+
 function renderTree() {
   treeEl.innerHTML = '';
   const tops = childNodes(model);
@@ -1691,6 +1723,26 @@ function renderNode(node, depth) {
   row.append(twist, sw, nm);
   if (isGroup) { const b = document.createElement('span'); b.className = 'badge'; b.textContent = opLabel[node.userData.op]; row.append(b); }
   row.onclick = e => selectNode(node, e.shiftKey);
+
+  // ドラッグ＆ドロップでグループ間を移動（グループ行に落とす=その中へ、図形行に落とす=その図形と同じ階層へ）
+  row.draggable = true;
+  row.addEventListener('dragstart', e => { dragNodeId = node.userData.id; e.dataTransfer.effectAllowed = 'move'; });
+  row.addEventListener('dragover', e => {
+    const d = dragNodeId != null ? findById(dragNodeId) : null;
+    if (!d || d === node) return;
+    e.preventDefault(); e.stopPropagation();
+    row.classList.add('droptarget');
+  });
+  row.addEventListener('dragleave', () => row.classList.remove('droptarget'));
+  row.addEventListener('drop', e => {
+    e.preventDefault(); e.stopPropagation();
+    row.classList.remove('droptarget');
+    const d = dragNodeId != null ? findById(dragNodeId) : null;
+    dragNodeId = null;
+    if (!d || d === node) return;
+    const target = isGroup ? node : node.parent;
+    if (moveNode(d, target)) toast(target === model ? '一番上の階層へ移動しました' : `「${target.userData.name}」の中へ移動しました`);
+  });
 
   li.appendChild(row);
   treeEl.appendChild(li);
@@ -1717,6 +1769,7 @@ function refreshProps() {
   $('opWrap').style.display = isBool ? '' : 'none';     // 演算の選択は演算グループだけ
   $('ungroupBtn').style.display = isGroup ? '' : 'none';
   $('ungroupBtn').textContent = isBool ? '結合を解除（中の図形に分解）' : 'グループを解除';
+  $('popOutBtn').style.display = (m.parent && m.parent !== model) ? '' : 'none';   // グループの中の図形だけ
   $('hollowBtn').style.display = (m.userData.kind === 'primitive' && HOLLOW_TYPES.has(m.userData.type)) ? '' : 'none';
   $('explodeBtn').style.display = (m.userData.kind === 'svg' && !m.userData.shapeIdx) ? '' : 'none';   // 分解前のSVG全体だけ
   if (isBool) {
@@ -1900,6 +1953,10 @@ function bakeScale(node) {
     doHollow(wall, lidOpts, tube);
   };
   $('ungroupBtn').onclick = ungroupSelected;
+  $('popOutBtn').onclick = () => {
+    const a = activeNode(); if (!a || !a.parent || a.parent === model) return;
+    if (moveNode(a, model)) toast('グループから出しました（独立した実体の図形になりました）');
+  };
   $('explodeBtn').onclick = () => explodeSvg(activeNode());
 })();
 
