@@ -162,6 +162,7 @@
         <button data-add="roundedprism">▢ 角丸ボックス</button>
         <button data-add="cylinder">⬤ 円柱</button>
         <button data-add="taper">▽ 円錐台</button>
+        <button data-add="ellipse">⬭ 楕円柱</button>
         <button data-add="sphere">● 球</button>
         <button data-add="cone">▲ 円錐</button>
         <button data-add="torus">◯ トーラス</button>
@@ -536,7 +537,7 @@ scene.add(transform);
 // ============================================================
 let uid = 0, counter = 0;
 const palette = [0x4f9cff, 0xef8c5b, 0x5bd6a0, 0xc98cff, 0xf0d35b, 0xff7aa8];
-const labels = { box:'直方体', roundedprism:'角丸ボックス', cylinder:'円柱', taper:'円錐台', sphere:'球', cone:'円錐', pyramid:'四角錐', torus:'トーラス', boxtaper:'角錐台', trapezoid:'台形', triangle:'三角形', text:'文字', group:'結合形状' };
+const labels = { box:'直方体', roundedprism:'角丸ボックス', cylinder:'円柱', taper:'円錐台', ellipse:'楕円柱', sphere:'球', cone:'円錐', pyramid:'四角錐', torus:'トーラス', boxtaper:'角錐台', trapezoid:'台形', triangle:'三角形', text:'文字', group:'結合形状' };
 const svgDimDefs = [['depth','厚み mm'],['size','大きさ mm'],['wall','線の太さ mm(0=塗り)']];
 const opLabel = { union:'合体', subtract:'くり抜き', intersect:'共通部分', none:'グループ' };
 
@@ -545,6 +546,7 @@ const defaults = {
   roundedprism: { w: 40, h: 20, d: 40, r: 8 },
   cylinder: { r: 15, h: 30, seg: 48, fillet: 0 },
   taper:    { rt: 12, rb: 16, h: 40, seg: 48, fillet: 0 },
+  ellipse:  { rx: 20, rz: 12, h: 30, seg: 48 },
   sphere:   { r: 18, seg: 48 },
   cone:     { r: 16, h: 34, seg: 48, fillet: 0 },
   pyramid:  { r: 20, h: 34 },
@@ -559,6 +561,7 @@ const dimDefs = {
   roundedprism: [['w','幅 X'],['d','奥行 Z'],['h','高さ Y'],['r','角丸め r']],
   cylinder: [['r','直径'],['h','高さ'],['seg','分割数'],['fillet','角丸め r']],
   taper: [['rt','上の直径'],['rb','下の直径'],['h','高さ'],['seg','分割数'],['fillet','角丸め r']],
+  ellipse: [['rx','半径 X'],['rz','半径 Z'],['h','高さ'],['seg','分割数']],
   sphere: [['r','直径'],['seg','分割数']],
   cone: [['r','直径'],['h','高さ'],['seg','分割数'],['fillet','角丸め r']],
   pyramid: [['r','底半径'],['h','高さ']],
@@ -650,6 +653,15 @@ function buildGeometry(type, p) {
     case 'taper': {
       if (p.fillet > 0.05) return roundedLatheProfile([[0,-p.h/2],[p.rb,-p.h/2],[p.rt,p.h/2],[0,p.h/2]], p.fillet, p.seg);
       return new THREE.CylinderGeometry(p.rt, p.rb, p.h, p.seg);
+    }
+    case 'ellipse': {
+      // 楕円柱：XZ平面が楕円（半径 rx・rz）、上下面は平ら。押し出しで作る。
+      const shape = new THREE.Shape();
+      shape.absellipse(0, 0, p.rx, p.rz, 0, Math.PI * 2, false, 0);
+      const geo = new THREE.ExtrudeGeometry(shape, { depth: p.h, bevelEnabled: false, curveSegments: Math.max(8, Math.round(p.seg / 2)) });
+      geo.translate(0, 0, -p.h / 2);
+      geo.rotateX(-Math.PI / 2);
+      return geo;
     }
     case 'sphere': return new THREE.SphereGeometry(p.r, p.seg, Math.max(8, Math.round(p.seg / 2)));
     case 'cone': {
@@ -1256,7 +1268,7 @@ function dropToBed() {
 // ============================================================
 //  中空化（シェル）：選択した柱状の図形を、壁の厚みを残してくり抜く
 // ============================================================
-const HOLLOW_TYPES = new Set(['cylinder', 'taper', 'box', 'roundedprism']);
+const HOLLOW_TYPES = new Set(['cylinder', 'taper', 'box', 'roundedprism', 'ellipse']);
 // 内側にくり抜く図形（クローン）を作る。through=true なら両端を開ける（筒状）。失敗時は null。
 function makeInner(node, wall, floor, through) {
   const p = node.userData.params;
@@ -1269,6 +1281,7 @@ function makeInner(node, wall, floor, through) {
     case 'box': ip.w = p.w - 2 * wall; ip.d = p.d - 2 * wall; if (ip.w <= 0 || ip.d <= 0) return null; break;
     case 'roundedprism': ip.w = p.w - 2 * wall; ip.d = p.d - 2 * wall; ip.r = Math.max(0, p.r - wall);
       if (ip.w <= 0 || ip.d <= 0) return null; break;
+    case 'ellipse': ip.rx = p.rx - wall; ip.rz = p.rz - wall; if (ip.rx <= 0 || ip.rz <= 0) return null; break;
     default: return null;
   }
   const over = 1;                       // 端を確実に開けるための突き抜け量(mm)
@@ -1286,11 +1299,17 @@ function makeInner(node, wall, floor, through) {
 // プラグがつぶれる／すきまが大きすぎる場合は null。
 function makeLid(node, wall, gap, capH, plugH) {
   const p = node.userData.params;
-  const round_ = node.userData.type !== 'box' && node.userData.type !== 'roundedprism';
+  const round_ = node.userData.type !== 'box' && node.userData.type !== 'roundedprism' && node.userData.type !== 'ellipse';
   const cavityDepth = Math.max(1, p.h - wall - 0.5);   // 内側の深さを超えて差し込めないようクランプ
   plugH = Math.min(plugH, cavityDepth);
   let capNode, plugNode, outerSize;
-  if (round_) {
+  if (node.userData.type === 'ellipse') {
+    const plugRx = p.rx - wall - gap, plugRz = p.rz - wall - gap;
+    if (plugRx <= 0.2 || plugRz <= 0.2) return null;
+    capNode = newPrimitive('ellipse'); capNode.userData.params = { rx: p.rx, rz: p.rz, h: capH, seg: p.seg || 48 };
+    plugNode = newPrimitive('ellipse'); plugNode.userData.params = { rx: plugRx, rz: plugRz, h: plugH, seg: p.seg || 48 };
+    outerSize = Math.max(p.rx, p.rz) * 2;
+  } else if (round_) {
     const outerR = node.userData.type === 'taper' ? p.rt : p.r;   // 開口部はtaperなら上(rt)
     const plugR = outerR - wall - gap;
     if (plugR <= 0.2) return null;
@@ -1876,6 +1895,7 @@ function bakeScale(node) {
   else if (t === 'roundedprism') { mul('w', s.x); mul('h', s.y); mul('d', s.z); mul('r', Math.min(s.x, s.z)); }
   else if (t === 'cylinder') { mul('r', rxz); mul('h', s.y); mul('fillet', Math.min(rxz, s.y)); }
   else if (t === 'taper') { mul('rt', rxz); mul('rb', rxz); mul('h', s.y); mul('fillet', Math.min(rxz, s.y)); }
+  else if (t === 'ellipse') { mul('rx', s.x); mul('rz', s.z); mul('h', s.y); }
   else if (t === 'cone') { mul('r', rxz); mul('h', s.y); mul('fillet', Math.min(rxz, s.y)); }
   else if (t === 'pyramid') { mul('r', rxz); mul('h', s.y); }
   else if (t === 'sphere') { mul('r', all); }
