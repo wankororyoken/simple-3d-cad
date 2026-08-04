@@ -150,6 +150,7 @@
     <button id="traceBtn">画像トレース</button>
     <button id="importStlBtn">STL読込</button>
     <button id="saveBtn">保存(JSON)</button>
+    <button id="saveAsBtn" title="現在のファイルを上書きせず、新しい名前で保存します">別名で保存(JSON)</button>
     <button id="loadBtn">読込</button>
     <button id="exportBtn" class="primary">STL書き出し</button>
   </header>
@@ -2262,15 +2263,18 @@ $('traceGo').onclick = () => {
 
 let currentFileHandle = null;   // 読み込み／保存した JSON ファイルのハンドル。次回の保存で同じファイルへ上書きする。
 
-$('saveBtn').onclick = async () => {
+// existingHandle を渡せばそのファイルへ上書き、null なら常に新しい名前を聞く（別名で保存）。
+async function saveJson(existingHandle) {
   const data = { v: 2, model: childNodes(model).map(serialize) };
   const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
-  const result = await saveBlob(blob, 'design.json', { description: '3D CAD 編集用データ', accept: { 'application/json': ['.json'] } }, currentFileHandle);
+  const result = await saveBlob(blob, 'design.json', { description: '3D CAD 編集用データ', accept: { 'application/json': ['.json'] } }, existingHandle);
   if (result) {
     currentFileHandle = result.handle;   // 対応ブラウザ以外や失敗時は null（次回また名前を聞く）
     toast(result.overwrote ? result.name + ' に上書き保存しました' : result.name + ' を保存しました');
   }
-};
+}
+$('saveBtn').onclick = () => saveJson(currentFileHandle);
+$('saveAsBtn').onclick = () => saveJson(null);
 $('loadBtn').onclick = async () => {
   // 対応ブラウザ（Chrome等）はファイルハンドルを覚えておき、次回の保存でそのファイルに上書きできるようにする
   if (window.showOpenFilePicker) {
