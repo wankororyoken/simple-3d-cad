@@ -384,6 +384,21 @@
         <option value="l">L字（棚受け）</option>
         <option value="s">S字フック</option>
       </select>
+    </div>
+    <div class="row" style="margin-bottom:8px">
+      <label>マス目</label>
+      <select id="peGrid1" style="width:86px; flex-shrink:0;">
+        <option value="1">1mm</option>
+        <option value="5">5mm</option>
+        <option value="10" selected>10mm</option>
+      </select>
+      <label style="margin-left:8px">表示範囲</label>
+      <select id="peZoom" style="width:96px; flex-shrink:0;">
+        <option value="40">40mm</option>
+        <option value="80">80mm</option>
+        <option value="160" selected>160mm</option>
+        <option value="320">320mm</option>
+      </select>
       <label style="margin-left:8px">スナップ</label>
       <select id="peSnap" style="width:90px; flex-shrink:0;">
         <option value="0">なし</option>
@@ -391,6 +406,8 @@
         <option value="5" selected>5mm</option>
         <option value="10">10mm</option>
       </select>
+      <span class="spacer"></span>
+      <button id="peFit" style="flex-shrink:0;" title="描いた線がちょうど収まる表示範囲にします">全体を表示</button>
     </div>
     <svg id="peCanvas" viewBox="-80 -60 160 120"
          style="width:100%; aspect-ratio:4/3; background:#0d1522; border:1px solid var(--line); border-radius:8px; touch-action:none; display:block;">
@@ -2302,7 +2319,13 @@ function bakeScale(node) {
     doHollow(wall, lidOpts, tube);
   };
   // ---- 2D パスエディタ（線を描いて立体化）----
-  const PEV = { x0: -80, y0: -60, w: 160, h: 120 };
+  const PE_ASPECT = 0.75;           // キャンバスの縦横比（CSS の aspect-ratio:4/3 と一致させること）
+  let peView = 160;                 // 表示範囲（mm・横幅）
+  let peCx = 0, peCy = 0;           // 表示の中心（mm）。原点固定だと端に描いた形が見切れるため。
+  const peH = () => peView * PE_ASPECT;
+  const peK = () => peView / 160;   // 拡大しても線や点の「画面上の太さ」を一定に保つための倍率
+  // 目盛りの数字を打つ間隔。画面上で詰まらないよう、きりのいい数値から選ぶ。
+  const peLabelStep = () => [1, 2, 5, 10, 20, 25, 50, 100, 200, 500].find(c => c >= peView * 0.075) || 500;
   let peTarget = null;              // 編集中の sweep ノード（null なら新規作成）
   let pePts = [], peRads = [], peSel = -1, peDrag = -1;
 
@@ -2328,6 +2351,8 @@ function bakeScale(node) {
     peSel = -1; peDrag = -1;
     $('peTpl').value = '';
     $('peGo').textContent = node ? 'パスを更新する' : '立体にする';
+    peView = 160; $('peZoom').value = 160;
+    peFitView();
     $('pathModal').style.display = 'flex';
     peRender();
   }
@@ -2342,23 +2367,60 @@ function bakeScale(node) {
   // 画面座標 → mm（viewBox と縦横比を合わせてあるので単純な線形変換でよい）
   function peXY(e, snap) {
     const r = $('peCanvas').getBoundingClientRect();
-    let x = PEV.x0 + (e.clientX - r.left) / r.width * PEV.w;
-    let y = -(PEV.y0 + (e.clientY - r.top) / r.height * PEV.h);
+    const w = peView, h = peH();
+    let x = (peCx - w / 2) + (e.clientX - r.left) / r.width * w;
+    let y = -((-peCy - h / 2) + (e.clientY - r.top) / r.height * h);
     const s = snap === false ? 0 : parseFloat($('peSnap').value) || 0;
     if (s > 0) { x = Math.round(x / s) * s; y = Math.round(y / s) * s; }
-    return [x, y];
+    return [+x.toFixed(3), +y.toFixed(3)];
+  }
+  // 描いた線がちょうど収まるよう、表示の中心と範囲を合わせる
+  function peFitView() {
+    if (!pePts.length) { peCx = peCy = 0; return; }
+    let a = Infinity, b = -Infinity, c = Infinity, d = -Infinity;
+    pePts.forEach(([x, y]) => { a = Math.min(a, x); b = Math.max(b, x); c = Math.min(c, y); d = Math.max(d, y); });
+    peCx = (a + b) / 2; peCy = (c + d) / 2;
+    const pad = Math.max(6, parseFloat($('peT').value) || 8);
+    const need = Math.max((b - a) + pad * 2, ((d - c) + pad * 2) / PE_ASPECT);
+    const opts = [...$('peZoom').options].map(o => +o.value).sort((x, y) => x - y);
+    peView = opts.find(v => v >= need) || opts[opts.length - 1];
+    $('peZoom').value = peView;
   }
   function peRender() {
     const svgns = 'http://www.w3.org/2000/svg';
+    const w = peView, h = peH(), k = peK();
+    const x0 = peCx - w / 2, x1 = peCx + w / 2;     // 見えている mm の x 範囲
+    const yB = peCy - h / 2, yT = peCy + h / 2;     // 見えている mm の y 範囲
+    const y0 = -yT, y1 = -yB;                       // それを反転前（画面）の y に直したもの
+    $('peCanvas').setAttribute('viewBox', `${x0} ${y0} ${w} ${h}`);
     const grid = $('peGrid'); grid.innerHTML = '';
-    const line = (x1, y1, x2, y2, col, w) => {
-      const l = document.createElementNS(svgns, 'line');
-      l.setAttribute('x1', x1); l.setAttribute('y1', y1); l.setAttribute('x2', x2); l.setAttribute('y2', y2);
-      l.setAttribute('stroke', col); l.setAttribute('stroke-width', w);
-      grid.appendChild(l);
+    // ※ この g は上下反転していないので、mm の y を描くときは符号を反転する
+    const el = (tag, attrs, txt) => {
+      const n = document.createElementNS(svgns, tag);
+      for (const a in attrs) n.setAttribute(a, attrs[a]);
+      if (txt != null) n.textContent = txt;
+      grid.appendChild(n); return n;
     };
-    for (let x = -80; x <= 80; x += 10) line(x, -60, x, 60, x === 0 ? '#41506b' : '#1e2a3d', x === 0 ? 0.5 : 0.3);
-    for (let y = -60; y <= 60; y += 10) line(-80, y, 80, y, y === 0 ? '#41506b' : '#1e2a3d', y === 0 ? 0.5 : 0.3);
+    const vline = (x, col, sw) => el('line', { x1: x, y1: y0, x2: x, y2: y1, stroke: col, 'stroke-width': sw });
+    const hline = (y, col, sw) => el('line', { x1: x0, y1: -y, x2: x1, y2: -y, stroke: col, 'stroke-width': sw });
+    const from = (lo, step) => Math.ceil(lo / step) * step;
+
+    const minor = parseFloat($('peGrid1').value) || 10;
+    const major = peLabelStep();
+    if (w / minor <= 170) {           // 細かすぎて塗りつぶしに見える場合は小マスを省く
+      for (let x = from(x0, minor); x <= x1; x += minor) vline(x, '#1b2739', 0.3 * k);
+      for (let y = from(yB, minor); y <= yT; y += minor) hline(y, '#1b2739', 0.3 * k);
+    }
+    for (let x = from(x0, major); x <= x1; x += major) vline(x, x === 0 ? '#4a5c7a' : '#26344a', (x === 0 ? 0.5 : 0.4) * k);
+    for (let y = from(yB, major); y <= yT; y += major) hline(y, y === 0 ? '#4a5c7a' : '#26344a', (y === 0 ? 0.5 : 0.4) * k);
+    const fs = { fill: '#8fa3c0', 'font-size': 3.4 * k, 'font-family': 'system-ui, sans-serif' };
+    for (let x = from(x0, major); x <= x1; x += major)
+      el('text', { ...fs, x, y: y1 - 1.6 * k, 'text-anchor': 'middle' }, String(+x.toFixed(2)));
+    for (let y = from(yB, major); y <= yT; y += major)
+      el('text', { ...fs, x: x0 + 1.4 * k, y: -y + 1.2 * k, 'text-anchor': 'start' }, String(+y.toFixed(2)));
+    // 目盛りの数字は下辺と左辺に並ぶので、この表示は上辺（空いている側）に置く
+    el('text', { ...fs, x: x1 - 1.4 * k, y: y0 + 4.2 * k, 'text-anchor': 'end', 'fill-opacity': 0.75 },
+       `1マス ${minor}mm`);
 
     const p = peParams();
     // 実際に立体化されるのと同じ点列を描く（角丸めの下限クランプもそのまま見える＝見た目どおりになる）
@@ -2367,14 +2429,17 @@ function bakeScale(node) {
     const body = $('peBody');
     body.setAttribute('d', d);
     body.setAttribute('stroke-width', p.t);       // 線を太さ t で描く＝掃引後のシルエットそのもの
-    $('peLine').setAttribute('d', pePts.length >= 2 ? pePts.map((q, i) => (i ? 'L' : 'M') + q[0] + ' ' + q[1]).join(' ') : '');
+    const ln = $('peLine');
+    ln.setAttribute('d', pePts.length >= 2 ? pePts.map((q, i) => (i ? 'L' : 'M') + q[0] + ' ' + q[1]).join(' ') : '');
+    ln.setAttribute('stroke-width', 0.5 * k);
+    ln.setAttribute('stroke-dasharray', (2 * k) + ' ' + (2 * k));
 
     const hs = $('peHandles'); hs.innerHTML = '';
     pePts.forEach((q, i) => {
       const c = document.createElementNS(svgns, 'circle');
-      c.setAttribute('cx', q[0]); c.setAttribute('cy', q[1]); c.setAttribute('r', i === peSel ? 2.6 : 2);
+      c.setAttribute('cx', q[0]); c.setAttribute('cy', q[1]); c.setAttribute('r', (i === peSel ? 2.6 : 2) * k);
       c.setAttribute('fill', i === peSel ? '#ffd166' : '#0d1522');
-      c.setAttribute('stroke', i === peSel ? '#ffd166' : '#cfe0ff'); c.setAttribute('stroke-width', 0.6);
+      c.setAttribute('stroke', i === peSel ? '#ffd166' : '#cfe0ff'); c.setAttribute('stroke-width', 0.6 * k);
       hs.appendChild(c);
     });
   }
@@ -2382,7 +2447,7 @@ function bakeScale(node) {
     const svg = $('peCanvas');
     const hit = e => {                       // 掴んだ点の添字（近くになければ -1）
       const [x, y] = peXY(e, false);
-      let best = -1, bd = 4;
+      let best = -1, bd = 4 * peK();
       pePts.forEach((q, i) => { const dd = Math.hypot(q[0] - x, q[1] - y); if (dd < bd) { bd = dd; best = i; } });
       return best;
     };
@@ -2403,6 +2468,9 @@ function bakeScale(node) {
     svg.addEventListener('pointercancel', stop);
   })();
   ['peSect', 'peT', 'peTw'].forEach(id => $(id).oninput = peRender);
+  $('peGrid1').onchange = peRender;
+  $('peZoom').onchange = () => { peView = parseFloat($('peZoom').value) || 160; peRender(); };
+  $('peFit').onclick = () => { peFitView(); peRender(); };
   $('peRad').oninput = () => {
     if (peSel < 0) return;
     peRads[peSel] = Math.max(0, parseFloat($('peRad').value) || 0);
@@ -2413,7 +2481,7 @@ function bakeScale(node) {
     pePts.splice(peSel, 1); peRads.splice(peSel, 1);
     peSel = -1; peSyncSel(); peRender();
   };
-  $('peClear').onclick = () => { pePts = []; peRads = []; peSel = -1; peSyncSel(); peRender(); };
+  $('peClear').onclick = () => { pePts = []; peRads = []; peSel = -1; peCx = peCy = 0; peSyncSel(); peRender(); };
   $('peTpl').onchange = () => {
     const v = $('peTpl').value; if (!v) return;
     const base = { ...defaults.hook, preset: v };
@@ -2421,6 +2489,7 @@ function bakeScale(node) {
     peRads = pePts.map(() => base.bend);
     $('peT').value = base.t; $('peTw').value = base.tw;
     peSel = -1; $('peTpl').value = '';
+    peFitView();
     peSyncSel(); peRender();
   };
   $('peCancel').onclick = () => $('pathModal').style.display = 'none';
