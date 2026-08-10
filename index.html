@@ -172,6 +172,7 @@
         <button data-add="trapezoid">⏢ 台形</button>
         <button data-add="triangle">▲ 三角形</button>
         <button data-add="hook">🪝 フック</button>
+        <button id="drawPathBtn">✏ 線を描いて立体化</button>
         <button data-add="text" disabled>🅰 文字(読込中)</button>
       </div>
     </div>
@@ -284,6 +285,7 @@
       <button id="dropBtn" title="底面をXZ平面(テーブル)に合わせる" style="margin-top:6px; width:100%">⤓ テーブルに置く</button>
       <button id="hollowBtn" title="壁の厚みを残して中をくり抜く（コップ状・筒状）" style="display:none; margin-top:6px; width:100%">🥤 中空化</button>
       <button id="ungroupBtn" style="display:none; margin-top:6px; width:100%">結合を解除（中の図形に分解）</button>
+      <button id="editPathBtn" title="この図形のもとになった線を、2Dエディタで描き直します" style="display:none; margin-top:6px; width:100%">✏ パスを編集</button>
       <button id="popOutBtn" title="このグループから外して、独立した図形に戻します（くり抜き役だった図形は実体に戻ります）" style="display:none; margin-top:6px; width:100%">⬆ グループから出す（独立させる）</button>
       <button id="explodeBtn" title="読み込んだ図形を、形ごとの独立オブジェクトに分けます" style="display:none; margin-top:6px; width:100%">✂ パーツに分解（バラバラにする）</button>
     </div>
@@ -363,6 +365,62 @@
     <div class="modal-actions">
       <button id="hwCancel">キャンセル</button>
       <button id="hwGo" class="primary">中空化する</button>
+    </div>
+  </div>
+</div>
+
+<div id="pathModal" class="modal-overlay" style="display:none">
+  <div class="modal" style="width:660px">
+    <h3>線を描いて立体化</h3>
+    <div class="muted" style="margin-bottom:10px">
+      何もない所をクリックで点を追加／点をドラッグで移動／点をクリックで選択。表示されている太い線が、そのまま出来上がる形（横から見た figure）です。
+    </div>
+    <div class="row" style="margin-bottom:8px">
+      <label>下書き</label>
+      <select id="peTpl" style="flex:1; min-width:0;">
+        <option value="">（テンプレートから始める）</option>
+        <option value="j">J字フック</option>
+        <option value="u">U字フック</option>
+        <option value="l">L字（棚受け）</option>
+        <option value="s">S字フック</option>
+      </select>
+      <label style="margin-left:8px">スナップ</label>
+      <select id="peSnap" style="width:90px; flex-shrink:0;">
+        <option value="0">なし</option>
+        <option value="1">1mm</option>
+        <option value="5" selected>5mm</option>
+        <option value="10">10mm</option>
+      </select>
+    </div>
+    <svg id="peCanvas" viewBox="-80 -60 160 120"
+         style="width:100%; aspect-ratio:4/3; background:#0d1522; border:1px solid var(--line); border-radius:8px; touch-action:none; display:block;">
+      <g id="peGrid"></g>
+      <g id="peFlip" transform="scale(1,-1)">
+        <path id="peBody" fill="none" stroke="#6ea8fe" stroke-opacity="0.55" stroke-linejoin="round" stroke-linecap="round"/>
+        <path id="peLine" fill="none" stroke="#cfe0ff" stroke-width="0.5" stroke-dasharray="2 2"/>
+        <g id="peHandles"></g>
+      </g>
+    </svg>
+    <div class="row" style="margin-top:10px">
+      <label>断面の形</label>
+      <select id="peSect" style="flex:1; min-width:0;">
+        <option value="round">丸・楕円</option>
+        <option value="rrect">角丸</option>
+        <option value="rect">角</option>
+      </select>
+      <label style="margin-left:8px">太さ(縦)</label><input type="number" id="peT" min="0.5" step="0.5" value="8" style="width:80px; flex-shrink:0;">
+      <label style="margin-left:8px">太さ(横)</label><input type="number" id="peTw" min="0.5" step="0.5" value="8" style="width:80px; flex-shrink:0;">
+    </div>
+    <div class="row" style="margin-top:8px">
+      <label>選んだ点の角丸め</label>
+      <input type="number" id="peRad" min="0" step="1" value="0" style="width:90px; flex-shrink:0;" disabled>
+      <span class="muted" style="flex:1; min-width:0; margin-left:8px" id="peHint">点を選ぶと、その角の丸みを指定できます。</span>
+      <button id="peDel" disabled style="flex-shrink:0;">この点を削除</button>
+      <button id="peClear" style="flex-shrink:0; margin-left:6px;">全部消す</button>
+    </div>
+    <div class="modal-actions">
+      <button id="peCancel">キャンセル</button>
+      <button id="peGo" class="primary">立体にする</button>
     </div>
   </div>
 </div>
@@ -539,7 +597,7 @@ scene.add(transform);
 // ============================================================
 let uid = 0, counter = 0;
 const palette = [0x4f9cff, 0xef8c5b, 0x5bd6a0, 0xc98cff, 0xf0d35b, 0xff7aa8];
-const labels = { box:'直方体', roundedprism:'角丸ボックス', cylinder:'円柱', taper:'円錐台', ellipse:'楕円柱', sphere:'球', cone:'円錐', pyramid:'四角錐', torus:'トーラス', boxtaper:'角錐台', trapezoid:'台形', triangle:'三角形', text:'文字', hook:'フック', group:'結合形状' };
+const labels = { box:'直方体', roundedprism:'角丸ボックス', cylinder:'円柱', taper:'円錐台', ellipse:'楕円柱', sphere:'球', cone:'円錐', pyramid:'四角錐', torus:'トーラス', boxtaper:'角錐台', trapezoid:'台形', triangle:'三角形', text:'文字', hook:'フック', sweep:'パス立体', group:'結合形状' };
 const svgDimDefs = [['depth','厚み mm'],['size','大きさ mm'],['wall','線の太さ mm(0=塗り)']];
 const opLabel = { union:'合体', subtract:'くり抜き', intersect:'共通部分', none:'グループ' };
 
@@ -559,6 +617,7 @@ const defaults = {
   text:     { text: 'ABC', size: 14, depth: 6 },
   hook:     { preset: 'j', sect: 'round', t: 8, tw: 8, arm: 30, drop: 25, gap: 18, rise: 12, bend: 6,
               plateW: 24, plateH: 44, plateT: 5, plateR: 5, holeD: 4.2, holeN: 2, headD: 8, gusset: 8, seg: 32 },
+  sweep:    { pts: [[0, 0], [30, 0]], rads: [0, 0], sect: 'round', t: 8, tw: 8, seg: 32 },
 };
 const dimDefs = {
   box: [['w','幅 X'],['h','高さ Y'],['d','奥行 Z'],['fillet','角丸め r']],
@@ -578,6 +637,7 @@ const dimDefs = {
          ['drop','下がり量'],['gap','開口幅'],['rise','先端の反り上がり'],['bend','曲げ半径'],
          ['plateH','ベース高さ'],['plateW','ベース幅'],['plateT','ベース厚み'],['plateR','ベース角丸め'],
          ['gusset','付け根の補強'],['holeN','ネジ穴の数'],['holeD','ネジ穴径'],['headD','皿取り径(0=なし)'],['seg','分割数']],
+  sweep: [['sect','断面の形'],['t','太さ(縦)'],['tw','太さ(横)'],['seg','分割数']],
 };
 // 内部は半径で保持するが入力欄では直径表示にするキー
 const diaKeys = {
@@ -608,8 +668,10 @@ function roundedRectShape(w, h, r) {
   return s;
 }
 
-// 折れ線 corners: [[x,y],...] を、角を半径 f で丸めた THREE.Path にする（最初と最後の点は丸めない）。
+// 折れ線 corners: [[x,y],...] を、角を丸めた THREE.Path にする（最初と最後の点は丸めない）。
+// f は全体共通の半径（数値）でも、角ごとの半径（配列。corners と同じ添字）でもよい。
 function roundedPathFromCorners(corners, f) {
+  const radAt = i => Array.isArray(f) ? (f[i] || 0) : f;
   const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
   const toward = (from, to, d) => {           // from から to 方向へ距離 d の点
     const len = dist(from, to) || 1;
@@ -619,7 +681,7 @@ function roundedPathFromCorners(corners, f) {
   path.moveTo(corners[0][0], corners[0][1]);
   for (let i = 1; i < corners.length - 1; i++) {
     const A = corners[i - 1], B = corners[i], C = corners[i + 1];
-    const fab = Math.min(f, dist(A, B) * 0.49, dist(B, C) * 0.49);
+    const fab = Math.min(radAt(i), dist(A, B) * 0.49, dist(B, C) * 0.49);
     if (fab <= 0.01) { path.lineTo(B[0], B[1]); continue; }
     const TA = toward(B, A, fab), TC = toward(B, C, fab);
     path.lineTo(TA[0], TA[1]);
@@ -711,7 +773,7 @@ function hookPathPoints(p) {
   }
   return pts;
 }
-function hookSection(p) {
+function sectionPoints(p) {
   const hu = Math.max(0.5, p.t) / 2, hv = Math.max(0.5, p.tw) / 2;
   if (p.sect === 'rect') return [[-hu, -hv], [hu, -hv], [hu, hv], [-hu, hv]];
   if (p.sect === 'rrect') {
@@ -745,7 +807,7 @@ function hookBounds(p) {
   // アームは実際に掃引した頂点から測る（端は経路に垂直なフタなので、単純に太さ分ふくらませると過大になる）
   const hu = Math.max(0.5, p.t) / 2, hv = Math.max(0.5, p.tw) / 2;
   let minx = Infinity, maxx = -Infinity, miny = Infinity, maxy = -Infinity, minz = -hv, maxz = hv;
-  const g = sweepSolid(hookSection(p), hookPathPoints(p));
+  const g = sweepSolid(sectionPoints(p), hookPathPoints(p));
   if (g) {
     const a = g.attributes.position.array;
     for (let i = 0; i < a.length; i += 3) {
@@ -766,7 +828,7 @@ function hookBounds(p) {
 // フック本体を Manifold で組み立てる（アーム＋ベース＋補強 − ネジ穴）。呼び出し側が .delete() する。
 function hookToManifold(node) {
   const p = node.userData.params;
-  const gArm = sweepSolid(hookSection(p), hookPathPoints(p));
+  const gArm = sweepSolid(sectionPoints(p), hookPathPoints(p));
   if (!gArm) return null;
   let acc = null;
   try { acc = geomToManifold(gArm); } catch (e) { console.error(e); }
@@ -814,8 +876,61 @@ function hookToManifold(node) {
   return t;
 }
 
+// ---- 自由なパス（線を描いて立体化）----
+// pts: 折れ線の頂点[[x,y],...]、rads: 各頂点の角丸め半径。断面の指定はフックと共通。
+function sweepPathPoints(p) {
+  const pts = (p.pts || []).filter(q => q && q.length === 2);
+  if (pts.length < 2) return null;
+  // 曲げが断面の半分より小さいと内側で形が自分にめり込むので、角丸めに下限を設ける
+  const minR = Math.max(0.5, p.t) / 2 + 0.1;
+  const rads = pts.map((_, i) => Math.max((p.rads && p.rads[i]) || 0, minR));
+  const raw = roundedPathFromCorners(pts, rads).getPoints(12);
+  const out = [];
+  for (const q of raw) {
+    if (out.length && Math.hypot(q.x - out[out.length - 1][0], q.y - out[out.length - 1][1]) < 1e-4) continue;
+    out.push([q.x, q.y]);
+  }
+  return out.length >= 2 ? out : null;
+}
+function sweepGeo(p) {
+  const path = sweepPathPoints(p);
+  return path ? sweepSolid(sectionPoints(p), path) : null;
+}
+function sweepBounds(p) {
+  const hv = Math.max(0.5, p.tw) / 2;
+  const b = { minx: 0, maxx: 0, miny: 0, maxy: 0, minz: -hv, maxz: hv };
+  const g = sweepGeo(p);
+  if (!g) return b;
+  const a = g.attributes.position.array;
+  b.minx = b.miny = b.minz = Infinity; b.maxx = b.maxy = b.maxz = -Infinity;
+  for (let i = 0; i < a.length; i += 3) {
+    if (a[i] < b.minx) b.minx = a[i];       if (a[i] > b.maxx) b.maxx = a[i];
+    if (a[i+1] < b.miny) b.miny = a[i+1];   if (a[i+1] > b.maxy) b.maxy = a[i+1];
+    if (a[i+2] < b.minz) b.minz = a[i+2];   if (a[i+2] > b.maxz) b.maxz = a[i+2];
+  }
+  g.dispose();
+  return b;
+}
+function sweepToManifold(node) {
+  const p = node.userData.params;
+  const g = sweepGeo(p);
+  if (!g) return null;
+  let acc = null;
+  try { acc = geomToManifold(g); } catch (e) { console.error(e); }
+  g.dispose();
+  if (!acc) return null;
+  const b = sweepBounds(p);   // 他のプリミティブと同じく外形の中心を原点にそろえる
+  const t = acc.translate([-(b.minx + b.maxx) / 2, -(b.miny + b.maxy) / 2, -(b.minz + b.maxz) / 2]);
+  acc.delete();
+  return t;
+}
+
 function buildGeometry(type, p) {
   switch (type) {
+    case 'sweep': {
+      const b = sweepBounds(p);   // 実体は sweepToManifold が作る。ここは配置用の外形サイズだけ。
+      return new THREE.BoxGeometry(Math.max(0.1, b.maxx - b.minx), Math.max(0.1, b.maxy - b.miny), Math.max(0.1, b.maxz - b.minz));
+    }
     case 'hook': {
       // 実際の立体は hookToManifold が watertight に作る。ここは配置用の外形サイズだけ分かればよい。
       const b = hookBounds(p);
@@ -1045,7 +1160,7 @@ function newSvg(svgText, baseName, depth) {
 
 function newPrimitive(type) {
   const n = new THREE.Object3D();
-  n.userData = { kind: 'primitive', type, params: { ...defaults[type] }, color: palette[counter % palette.length], name: labels[type] + ' ' + (++counter), id: ++uid, expanded: false };
+  n.userData = { kind: 'primitive', type, params: copyParams(defaults[type]), color: palette[counter % palette.length], name: labels[type] + ' ' + (++counter), id: ++uid, expanded: false };
   return n;
 }
 function newGroup(op) {
@@ -1120,6 +1235,12 @@ function nodeToManifold(node) {
   node.updateWorldMatrix(true, false);
   if (node.userData.kind === 'svg') return svgToManifold(node);
   if (node.userData.kind === 'primitive' && node.userData.type === 'text') return textToManifold(node);
+  if (node.userData.kind === 'primitive' && node.userData.type === 'sweep') {
+    let acc = sweepToManifold(node);
+    if (!acc) return null;
+    const tm = acc.transform([...node.matrixWorld.elements]); acc.delete();
+    return tm;
+  }
   if (node.userData.kind === 'primitive' && node.userData.type === 'hook') {
     let acc = hookToManifold(node);
     if (!acc) return null;
@@ -1418,7 +1539,7 @@ document.querySelectorAll('[data-add]').forEach(btn => btn.onclick = () => addPr
 function cloneNode(node) {
   const c = new THREE.Object3D();
   c.position.copy(node.position); c.rotation.copy(node.rotation); c.scale.copy(node.scale);
-  c.userData = { ...node.userData, params: node.userData.params ? { ...node.userData.params } : undefined, id: ++uid, name: node.userData.name + ' copy' };
+  c.userData = { ...node.userData, params: node.userData.params ? copyParams(node.userData.params) : undefined, id: ++uid, name: node.userData.name + ' copy' };
   childNodes(node).forEach(ch => c.add(cloneNode(ch)));
   return c;
 }
@@ -1983,7 +2104,8 @@ function refreshProps() {
   $('opWrap').style.display = isBool ? '' : 'none';     // 演算の選択は演算グループだけ
   $('ungroupBtn').style.display = isGroup ? '' : 'none';
   $('ungroupBtn').textContent = isBool ? '結合を解除（中の図形に分解）' : 'グループを解除';
-  $('popOutBtn').style.display = (m.parent && m.parent !== model) ? '' : 'none';   // グループの中の図形だけ
+  $('popOutBtn').style.display = (m.parent && m.parent !== model) ? '' : 'none';
+  $('editPathBtn').style.display = (m.userData.kind === 'primitive' && m.userData.type === 'sweep') ? '' : 'none';   // グループの中の図形だけ
   $('hollowBtn').style.display = (m.userData.kind === 'primitive' && HOLLOW_TYPES.has(m.userData.type)) ? '' : 'none';
   $('explodeBtn').style.display = (m.userData.kind === 'svg' && !m.userData.shapeIdx) ? '' : 'none';   // 分解前のSVG全体だけ
   if (isBool) {
@@ -2099,6 +2221,11 @@ function bakeScale(node) {
   else if (t === 'trapezoid') { mul('wb', s.x); mul('wt', s.x); mul('h', s.y); mul('d', s.z); }
   else if (t === 'triangle') { mul('w', s.x); mul('h', s.y); mul('d', s.z); }
   else if (t === 'text') { mul('size', (s.x + s.y) / 2); mul('depth', s.z); }
+  else if (t === 'sweep') {
+    if (Array.isArray(p.pts)) p.pts = p.pts.map(q => [q[0] * s.x, q[1] * s.y]);
+    if (Array.isArray(p.rads)) p.rads = p.rads.map(r => r * Math.min(s.x, s.y));
+    mul('t', s.y); mul('tw', s.z);
+  }
   else if (t === 'hook') {
     mul('arm', s.x); mul('gap', s.x); mul('plateT', s.x);
     mul('t', s.y); mul('drop', s.y); mul('rise', s.y); mul('plateH', s.y); mul('gusset', s.y);
@@ -2174,6 +2301,156 @@ function bakeScale(node) {
     $('hollowModal').style.display = 'none';
     doHollow(wall, lidOpts, tube);
   };
+  // ---- 2D パスエディタ（線を描いて立体化）----
+  const PEV = { x0: -80, y0: -60, w: 160, h: 120 };
+  let peTarget = null;              // 編集中の sweep ノード（null なら新規作成）
+  let pePts = [], peRads = [], peSel = -1, peDrag = -1;
+
+  function peParams() {
+    return {
+      pts: pePts.map(q => q.slice()), rads: peRads.slice(),
+      sect: $('peSect').value,
+      t: Math.max(0.5, parseFloat($('peT').value) || 8),
+      tw: Math.max(0.5, parseFloat($('peTw').value) || 8),
+      seg: 32,
+    };
+  }
+  function peOpen(node) {
+    peTarget = node;
+    if (node) {
+      const p = node.userData.params;
+      pePts = (p.pts || []).map(q => q.slice()); peRads = (p.rads || []).slice();
+      $('peSect').value = p.sect || 'round'; $('peT').value = p.t; $('peTw').value = p.tw;
+    } else {
+      pePts = []; peRads = [];
+      $('peSect').value = 'round'; $('peT').value = 8; $('peTw').value = 8;
+    }
+    peSel = -1; peDrag = -1;
+    $('peTpl').value = '';
+    $('peGo').textContent = node ? 'パスを更新する' : '立体にする';
+    $('pathModal').style.display = 'flex';
+    peRender();
+  }
+  function peSyncSel() {
+    const on = peSel >= 0;
+    $('peRad').disabled = !on; $('peDel').disabled = !on;
+    if (on) $('peRad').value = round(peRads[peSel] || 0);
+    $('peHint').textContent = on
+      ? `${peSel + 1}番目の点を選択中（両端の点では角丸めは使いません）`
+      : '点を選ぶと、その角の丸みを指定できます。';
+  }
+  // 画面座標 → mm（viewBox と縦横比を合わせてあるので単純な線形変換でよい）
+  function peXY(e, snap) {
+    const r = $('peCanvas').getBoundingClientRect();
+    let x = PEV.x0 + (e.clientX - r.left) / r.width * PEV.w;
+    let y = -(PEV.y0 + (e.clientY - r.top) / r.height * PEV.h);
+    const s = snap === false ? 0 : parseFloat($('peSnap').value) || 0;
+    if (s > 0) { x = Math.round(x / s) * s; y = Math.round(y / s) * s; }
+    return [x, y];
+  }
+  function peRender() {
+    const svgns = 'http://www.w3.org/2000/svg';
+    const grid = $('peGrid'); grid.innerHTML = '';
+    const line = (x1, y1, x2, y2, col, w) => {
+      const l = document.createElementNS(svgns, 'line');
+      l.setAttribute('x1', x1); l.setAttribute('y1', y1); l.setAttribute('x2', x2); l.setAttribute('y2', y2);
+      l.setAttribute('stroke', col); l.setAttribute('stroke-width', w);
+      grid.appendChild(l);
+    };
+    for (let x = -80; x <= 80; x += 10) line(x, -60, x, 60, x === 0 ? '#41506b' : '#1e2a3d', x === 0 ? 0.5 : 0.3);
+    for (let y = -60; y <= 60; y += 10) line(-80, y, 80, y, y === 0 ? '#41506b' : '#1e2a3d', y === 0 ? 0.5 : 0.3);
+
+    const p = peParams();
+    // 実際に立体化されるのと同じ点列を描く（角丸めの下限クランプもそのまま見える＝見た目どおりになる）
+    const path = sweepPathPoints(p);
+    const d = path ? path.map((q, i) => (i ? 'L' : 'M') + q[0].toFixed(2) + ' ' + q[1].toFixed(2)).join(' ') : '';
+    const body = $('peBody');
+    body.setAttribute('d', d);
+    body.setAttribute('stroke-width', p.t);       // 線を太さ t で描く＝掃引後のシルエットそのもの
+    $('peLine').setAttribute('d', pePts.length >= 2 ? pePts.map((q, i) => (i ? 'L' : 'M') + q[0] + ' ' + q[1]).join(' ') : '');
+
+    const hs = $('peHandles'); hs.innerHTML = '';
+    pePts.forEach((q, i) => {
+      const c = document.createElementNS(svgns, 'circle');
+      c.setAttribute('cx', q[0]); c.setAttribute('cy', q[1]); c.setAttribute('r', i === peSel ? 2.6 : 2);
+      c.setAttribute('fill', i === peSel ? '#ffd166' : '#0d1522');
+      c.setAttribute('stroke', i === peSel ? '#ffd166' : '#cfe0ff'); c.setAttribute('stroke-width', 0.6);
+      hs.appendChild(c);
+    });
+  }
+  (() => {
+    const svg = $('peCanvas');
+    const hit = e => {                       // 掴んだ点の添字（近くになければ -1）
+      const [x, y] = peXY(e, false);
+      let best = -1, bd = 4;
+      pePts.forEach((q, i) => { const dd = Math.hypot(q[0] - x, q[1] - y); if (dd < bd) { bd = dd; best = i; } });
+      return best;
+    };
+    svg.addEventListener('pointerdown', e => {
+      const i = hit(e);
+      if (i >= 0) { peSel = i; peDrag = i; }
+      else { pePts.push(peXY(e)); peRads.push(0); peSel = peDrag = pePts.length - 1; }
+      peSyncSel(); peRender();
+      // 画面外へドラッグしても追従させる。捕捉できない場合でも編集は続けられるので握りつぶす。
+      try { svg.setPointerCapture(e.pointerId); } catch (err) { /* noop */ }
+    });
+    svg.addEventListener('pointermove', e => { if (peDrag < 0) return; pePts[peDrag] = peXY(e); peRender(); });
+    const stop = e => {
+      peDrag = -1;
+      try { if (svg.hasPointerCapture(e.pointerId)) svg.releasePointerCapture(e.pointerId); } catch (err) { /* noop */ }
+    };
+    svg.addEventListener('pointerup', stop);
+    svg.addEventListener('pointercancel', stop);
+  })();
+  ['peSect', 'peT', 'peTw'].forEach(id => $(id).oninput = peRender);
+  $('peRad').oninput = () => {
+    if (peSel < 0) return;
+    peRads[peSel] = Math.max(0, parseFloat($('peRad').value) || 0);
+    peRender();
+  };
+  $('peDel').onclick = () => {
+    if (peSel < 0) return;
+    pePts.splice(peSel, 1); peRads.splice(peSel, 1);
+    peSel = -1; peSyncSel(); peRender();
+  };
+  $('peClear').onclick = () => { pePts = []; peRads = []; peSel = -1; peSyncSel(); peRender(); };
+  $('peTpl').onchange = () => {
+    const v = $('peTpl').value; if (!v) return;
+    const base = { ...defaults.hook, preset: v };
+    pePts = hookCorners(base).map(q => q.slice());
+    peRads = pePts.map(() => base.bend);
+    $('peT').value = base.t; $('peTw').value = base.tw;
+    peSel = -1; $('peTpl').value = '';
+    peSyncSel(); peRender();
+  };
+  $('peCancel').onclick = () => $('pathModal').style.display = 'none';
+  $('peGo').onclick = () => {
+    if (pePts.length < 2) { toast('点を2つ以上おいてください', true); return; }
+    const params = peParams();
+    if (!sweepPathPoints(params)) { toast('この線では立体を作れません。点の位置を見直してください', true); return; }
+    pushUndo();
+    if (peTarget) {
+      peTarget.userData.params = params;
+      selectNode(peTarget);
+      toast('パスを更新しました');
+    } else {
+      const n = newPrimitive('sweep');
+      n.userData.params = params;
+      const g = buildGeometry('sweep', params); g.computeBoundingBox();
+      n.position.y = -g.boundingBox.min.y; g.dispose();   // テーブルに乗せる
+      model.add(n);
+      selectNode(n);
+      toast('立体にしました。あとから「✏ パスを編集」で線を直せます');
+    }
+    $('pathModal').style.display = 'none';
+    renderTree(); requestRebuild();
+  };
+  $('drawPathBtn').onclick = () => peOpen(null);
+  $('editPathBtn').onclick = () => {
+    const a = activeNode();
+    if (a && a.userData.kind === 'primitive' && a.userData.type === 'sweep') peOpen(a);
+  };
+
   $('ungroupBtn').onclick = ungroupSelected;
   $('popOutBtn').onclick = () => {
     const a = activeNode(); if (!a || !a.parent || a.parent === model) return;
@@ -2324,12 +2601,19 @@ $('exportBtn').onclick = async () => {
 // ============================================================
 //  Save / Load (JSON, parametric tree)
 // ============================================================
+// params の複製。pts のような配列を持つ種類（sweep）でも、複製元と中身を共有しないようにする。
+function copyParams(p) {
+  if (!p) return p;
+  const o = { ...p };
+  for (const k in o) if (Array.isArray(o[k])) o[k] = o[k].map(v => Array.isArray(v) ? v.slice() : v);
+  return o;
+}
 function serialize(node) {
   const u = node.userData;
   const o = { kind: u.kind, name: u.name, color: u.color, expanded: u.expanded, opacity: u.opacity,
     pos: node.position.toArray(), rot: [node.rotation.x, node.rotation.y, node.rotation.z], scale: node.scale.toArray() };
-  if (u.kind === 'primitive') { o.type = u.type; o.params = { ...u.params }; }
-  else if (u.kind === 'svg') { o.svg = u.svg; o.params = { ...u.params }; if (u.shapeIdx) o.shapeIdx = u.shapeIdx.slice(); }
+  if (u.kind === 'primitive') { o.type = u.type; o.params = copyParams(u.params); }
+  else if (u.kind === 'svg') { o.svg = u.svg; o.params = copyParams(u.params); if (u.shapeIdx) o.shapeIdx = u.shapeIdx.slice(); }
   else if (u.kind === 'mesh') {
     const g = u.geometry;
     o.geom = { pos: Array.from(g.attributes.position.array), idx: g.index ? Array.from(g.index.array) : null };
@@ -2341,8 +2625,8 @@ function deserialize(o) {
   const n = new THREE.Object3D();
   n.position.fromArray(o.pos); n.rotation.set(...o.rot); n.scale.fromArray(o.scale);
   n.userData = { kind: o.kind, name: o.name, color: o.color, id: ++uid, expanded: o.expanded !== false, opacity: o.opacity };
-  if (o.kind === 'primitive') { n.userData.type = o.type; n.userData.params = { ...o.params }; }
-  else if (o.kind === 'svg') { n.userData.svg = o.svg; n.userData.params = { ...o.params }; if (o.shapeIdx) n.userData.shapeIdx = o.shapeIdx.slice(); }
+  if (o.kind === 'primitive') { n.userData.type = o.type; n.userData.params = copyParams(o.params); }
+  else if (o.kind === 'svg') { n.userData.svg = o.svg; n.userData.params = copyParams(o.params); if (o.shapeIdx) n.userData.shapeIdx = o.shapeIdx.slice(); }
   else if (o.kind === 'mesh') {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(o.geom.pos, 3));
