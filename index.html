@@ -171,6 +171,7 @@
         <button data-add="boxtaper">⏶ 角錐台</button>
         <button data-add="trapezoid">⏢ 台形</button>
         <button data-add="triangle">▲ 三角形</button>
+        <button data-add="hook">🪝 フック</button>
         <button data-add="text" disabled>🅰 文字(読込中)</button>
       </div>
     </div>
@@ -538,7 +539,7 @@ scene.add(transform);
 // ============================================================
 let uid = 0, counter = 0;
 const palette = [0x4f9cff, 0xef8c5b, 0x5bd6a0, 0xc98cff, 0xf0d35b, 0xff7aa8];
-const labels = { box:'直方体', roundedprism:'角丸ボックス', cylinder:'円柱', taper:'円錐台', ellipse:'楕円柱', sphere:'球', cone:'円錐', pyramid:'四角錐', torus:'トーラス', boxtaper:'角錐台', trapezoid:'台形', triangle:'三角形', text:'文字', group:'結合形状' };
+const labels = { box:'直方体', roundedprism:'角丸ボックス', cylinder:'円柱', taper:'円錐台', ellipse:'楕円柱', sphere:'球', cone:'円錐', pyramid:'四角錐', torus:'トーラス', boxtaper:'角錐台', trapezoid:'台形', triangle:'三角形', text:'文字', hook:'フック', group:'結合形状' };
 const svgDimDefs = [['depth','厚み mm'],['size','大きさ mm'],['wall','線の太さ mm(0=塗り)']];
 const opLabel = { union:'合体', subtract:'くり抜き', intersect:'共通部分', none:'グループ' };
 
@@ -556,6 +557,8 @@ const defaults = {
   trapezoid:{ wb: 40, wt: 20, h: 30, d: 30 },
   triangle: { kind: 'iso', w: 40, h: 35, d: 30 },
   text:     { text: 'ABC', size: 14, depth: 6 },
+  hook:     { preset: 'j', sect: 'round', t: 8, tw: 8, arm: 30, drop: 25, gap: 18, rise: 12, bend: 6,
+              plateW: 24, plateH: 44, plateT: 5, plateR: 5, holeD: 4.2, holeN: 2, headD: 8, gusset: 8, seg: 32 },
 };
 const dimDefs = {
   box: [['w','幅 X'],['h','高さ Y'],['d','奥行 Z'],['fillet','角丸め r']],
@@ -571,6 +574,10 @@ const dimDefs = {
   trapezoid: [['wb','下辺の幅'],['wt','上辺の幅'],['h','高さ'],['d','奥行 Z']],
   triangle: [['kind','形'],['w','底辺の幅'],['h','高さ'],['d','奥行 Z']],
   text: [['text','文字'],['size','サイズ'],['depth','厚み']],
+  hook: [['preset','種類'],['sect','断面の形'],['t','太さ(縦)'],['tw','太さ(横)'],['arm','アーム長'],
+         ['drop','下がり量'],['gap','開口幅'],['rise','先端の反り上がり'],['bend','曲げ半径'],
+         ['plateH','ベース高さ'],['plateW','ベース幅'],['plateT','ベース厚み'],['plateR','ベース角丸め'],
+         ['gusset','付け根の補強'],['holeN','ネジ穴の数'],['holeD','ネジ穴径'],['headD','皿取り径(0=なし)'],['seg','分割数']],
 };
 // 内部は半径で保持するが入力欄では直径表示にするキー
 const diaKeys = {
@@ -579,6 +586,8 @@ const diaKeys = {
 // 数値ではなく選択メニューで指定するパラメータ（[値, 表示名]）
 const dimSelects = {
   kind: [['iso', '二等辺（左右対称）'], ['right_l', '直角（左下が直角）'], ['right_r', '直角（右下が直角）']],
+  preset: [['j', 'J字（フック）'], ['u', 'U字（工具掛け）'], ['l', 'L字（棚受け）'], ['s', 'S字（両端フック・壁付けなし）']],
+  sect: [['round', '丸・楕円'], ['rrect', '角丸'], ['rect', '角']],
 };
 
 let jpFont = null;   // opentype.js font (Japanese); 文字 button stays disabled until ready
@@ -599,10 +608,8 @@ function roundedRectShape(w, h, r) {
   return s;
 }
 
-// 回転体（ろくろ）のプロファイルを、角を丸めながら作る。
-// corners: [x(=半径,≥0), y] の配列（下→上の順。最初と最後は軸上＝端なので丸めない）。
-// f: 角丸め半径。seg: 円周方向の分割数。
-function roundedLatheProfile(corners, f, seg) {
+// 折れ線 corners: [[x,y],...] を、角を半径 f で丸めた THREE.Path にする（最初と最後の点は丸めない）。
+function roundedPathFromCorners(corners, f) {
   const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
   const toward = (from, to, d) => {           // from から to 方向へ距離 d の点
     const len = dist(from, to) || 1;
@@ -620,6 +627,14 @@ function roundedLatheProfile(corners, f, seg) {
   }
   const last = corners[corners.length - 1];
   path.lineTo(last[0], last[1]);
+  return path;
+}
+
+// 回転体（ろくろ）のプロファイルを、角を丸めながら作る。
+// corners: [x(=半径,≥0), y] の配列（下→上の順。最初と最後は軸上＝端なので丸めない）。
+// f: 角丸め半径。seg: 円周方向の分割数。
+function roundedLatheProfile(corners, f, seg) {
+  const path = roundedPathFromCorners(corners, f);
   // 曲線を点列に。連続して重なる点は除く（Lathe の退化三角形を防ぐ）
   const raw = path.getPoints(10);
   const pts = [];
@@ -631,8 +646,181 @@ function roundedLatheProfile(corners, f, seg) {
   return new THREE.LatheGeometry(pts, seg);
 }
 
+// ============================================================
+//  パススイープ（断面 × 経路）— フックなどの「曲がった棒」を作る土台
+// ============================================================
+// section: 断面の輪郭 [[u,v],...]（閉じた凸多角形。u=経路平面内の厚み方向, v=Z方向の幅）
+// pathPts: 経路 [[x,y],...]（XY平面上の折れ線。平面なので断面がねじれない）
+// 戻り値: 端にフタの付いた watertight な BufferGeometry。
+function sweepSolid(section, pathPts) {
+  const n = section.length, m = pathPts.length;
+  if (n < 3 || m < 2) return null;
+  const pos = new Float32Array(n * m * 3);
+  for (let i = 0; i < m; i++) {
+    // 進行方向の接線から、経路平面内の法線を作る（平面経路なので Z 方向は常に一定＝ねじれない）
+    const prev = pathPts[Math.max(0, i - 1)], next = pathPts[Math.min(m - 1, i + 1)];
+    let tx = next[0] - prev[0], ty = next[1] - prev[1];
+    const L = Math.hypot(tx, ty) || 1; tx /= L; ty /= L;
+    const nx = -ty, ny = tx;
+    for (let j = 0; j < n; j++) {
+      const k = (i * n + j) * 3;
+      pos[k]     = pathPts[i][0] + section[j][0] * nx;
+      pos[k + 1] = pathPts[i][1] + section[j][0] * ny;
+      pos[k + 2] = section[j][1];
+    }
+  }
+  const idx = [];
+  for (let i = 0; i < m - 1; i++) for (let j = 0; j < n; j++) {
+    const j2 = (j + 1) % n;
+    const a = i * n + j, b = i * n + j2, c = (i + 1) * n + j, d = (i + 1) * n + j2;
+    idx.push(a, d, c, a, b, d);
+  }
+  const last = (m - 1) * n;                     // 両端のフタ（断面は凸なので扇形で塞げる）
+  for (let j = 1; j < n - 1; j++) { idx.push(0, j + 1, j); idx.push(last, last + j, last + j + 1); }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  return g;
+}
+
+// ---- フック ----
+// 座標の決め方：壁は YZ 平面（x=0）。アームは +X（壁から手前）へ伸び、先端は +Y（上）へ反り返る。
+// 断面の幅は Z 方向。ベースプレートは x=0〜plateT の板。
+function hookCorners(p) {
+  const arm = Math.max(1, p.arm), drop = Math.max(0.1, p.drop), rise = Math.max(0, p.rise);
+  const gap = Math.max(1, Math.min(p.gap, arm - 0.5));   // 開口がアーム長を超えないように
+  switch (p.preset) {
+    case 'l':   // L字（棚受け）：水平に出て、先端が少し反り上がる
+      return rise > 0.2 ? [[0, 0], [arm, 0], [arm, rise]] : [[0, 0], [arm, 0]];
+    case 'u':   // U字（工具掛け）：先端が付け根と同じ高さまで戻る
+      return [[0, 0], [arm, 0], [arm, -drop], [arm - gap, -drop], [arm - gap, 0]];
+    case 's':   // S字（両端フック・壁付けなし）
+      return [[gap, rise], [gap, 0], [0, 0], [0, -drop], [-gap, -drop], [-gap, -drop + rise]];
+    default:    // 'j' J字フック
+      return [[0, 0], [arm, 0], [arm, -drop], [arm - gap, -drop], [arm - gap, -drop + rise]];
+  }
+}
+function hookPathPoints(p) {
+  // 曲げ半径が断面の半分より小さいと内側で形が自分にめり込む（Manifold が破綻する）ので下限を設ける
+  const bend = Math.max(p.bend || 0, Math.max(0.5, p.t) / 2 + 0.1);
+  const raw = roundedPathFromCorners(hookCorners(p), bend).getPoints(12);
+  const pts = [];
+  for (const q of raw) {
+    if (pts.length && Math.hypot(q.x - pts[pts.length - 1][0], q.y - pts[pts.length - 1][1]) < 1e-4) continue;
+    pts.push([q.x, q.y]);
+  }
+  return pts;
+}
+function hookSection(p) {
+  const hu = Math.max(0.5, p.t) / 2, hv = Math.max(0.5, p.tw) / 2;
+  if (p.sect === 'rect') return [[-hu, -hv], [hu, -hv], [hu, hv], [-hu, hv]];
+  if (p.sect === 'rrect') {
+    const r = Math.min(hu, hv) * 0.5;
+    const raw = roundedRectShape(2 * hu, 2 * hv, r).getPoints(8);
+    const out = [];
+    for (const q of raw) {
+      if (out.length && Math.hypot(q.x - out[out.length - 1][0], q.y - out[out.length - 1][1]) < 1e-4) continue;
+      out.push([q.x, q.y]);
+    }
+    if (out.length > 2 && Math.hypot(out[0][0] - out[out.length - 1][0], out[0][1] - out[out.length - 1][1]) < 1e-4) out.pop();
+    return out;
+  }
+  const seg = Math.max(8, Math.round(p.seg || 32));   // 丸・楕円（t と tw を別々にすれば楕円になる）
+  const out = [];
+  for (let i = 0; i < seg; i++) { const a = i / seg * Math.PI * 2; out.push([hu * Math.cos(a), hv * Math.sin(a)]); }
+  return out;
+}
+function hookHoleYs(p) {
+  const n = Math.max(0, Math.round(p.holeN || 0));
+  if (!n) return [];
+  const margin = Math.max(p.holeD || 0, p.headD || 0) * 0.8 + 1.5;
+  const top = p.plateH / 2 - margin, bot = -p.plateH / 2 + margin;
+  if (n === 1 || top <= bot) return [top];
+  const out = [];
+  for (let i = 0; i < n; i++) out.push(bot + (top - bot) * i / (n - 1));
+  return out;
+}
+// 外形サイズ（テーブルへの設置や配置に使う概算。穴は外形を変えないので無視してよい）
+function hookBounds(p) {
+  // アームは実際に掃引した頂点から測る（端は経路に垂直なフタなので、単純に太さ分ふくらませると過大になる）
+  const hu = Math.max(0.5, p.t) / 2, hv = Math.max(0.5, p.tw) / 2;
+  let minx = Infinity, maxx = -Infinity, miny = Infinity, maxy = -Infinity, minz = -hv, maxz = hv;
+  const g = sweepSolid(hookSection(p), hookPathPoints(p));
+  if (g) {
+    const a = g.attributes.position.array;
+    for (let i = 0; i < a.length; i += 3) {
+      if (a[i] < minx) minx = a[i];         if (a[i] > maxx) maxx = a[i];
+      if (a[i+1] < miny) miny = a[i+1];     if (a[i+1] > maxy) maxy = a[i+1];
+      if (a[i+2] < minz) minz = a[i+2];     if (a[i+2] > maxz) maxz = a[i+2];
+    }
+    g.dispose();
+  } else { minx = maxx = miny = maxy = 0; }
+  if (p.preset !== 's') {
+    minx = Math.min(minx, 0); maxx = Math.max(maxx, p.plateT);
+    miny = Math.min(miny, -p.plateH / 2); maxy = Math.max(maxy, p.plateH / 2);
+    minz = Math.min(minz, -p.plateW / 2); maxz = Math.max(maxz, p.plateW / 2);
+    if (p.gusset > 0.2) miny = Math.min(miny, -hu - p.gusset);
+  }
+  return { minx, maxx, miny, maxy, minz, maxz };
+}
+// フック本体を Manifold で組み立てる（アーム＋ベース＋補強 − ネジ穴）。呼び出し側が .delete() する。
+function hookToManifold(node) {
+  const p = node.userData.params;
+  const gArm = sweepSolid(hookSection(p), hookPathPoints(p));
+  if (!gArm) return null;
+  let acc = null;
+  try { acc = geomToManifold(gArm); } catch (e) { console.error(e); }
+  if (gArm.dispose) gArm.dispose();
+  if (!acc) return null;
+  const fuse = geo => {                            // geo を acc に合体して geo を捨てる
+    let m = null;
+    try { m = geomToManifold(geo); } catch (e) { console.error(e); }
+    if (geo.dispose) geo.dispose();
+    if (!m) return;
+    const u = Manifold.union(acc, m); acc.delete(); m.delete(); acc = u;
+  };
+  if (p.preset !== 's') {
+    const pt = Math.max(0.5, p.plateT), pw = Math.max(1, p.plateW), ph = Math.max(1, p.plateH);
+    const pr = Math.max(0, Math.min(p.plateR || 0, Math.min(pw, ph) / 2 - 0.01));
+    const gp = new THREE.ExtrudeGeometry(roundedRectShape(pw, ph, pr), { depth: pt, bevelEnabled: false, curveSegments: 8 });
+    gp.rotateY(Math.PI / 2);                       // 押し出し方向を +X へ（板は x=0〜plateT、幅=Z・高さ=Y）
+    fuse(gp);
+    if (p.gusset > 0.2) {                          // 付け根の補強（すみ肉）。折れやすい所を三角形で厚くする
+      const g0 = p.gusset, hu = Math.max(0.5, p.t) / 2, hv = Math.max(0.5, p.tw) / 2;
+      const x0 = Math.max(0, pt - 0.5);            // 板とアームの両方に確実に食い込ませる
+      const s = new THREE.Shape();
+      s.moveTo(x0, -hu + 0.3); s.lineTo(x0 + g0, -hu + 0.3); s.lineTo(x0, -hu - g0); s.closePath();
+      const gg = new THREE.ExtrudeGeometry(s, { depth: 2 * hv, bevelEnabled: false });
+      gg.translate(0, 0, -hv);
+      fuse(gg);
+    }
+    const hr = Math.max(0.3, (p.holeD || 0) / 2);
+    if (hr > 0.3) for (const y of hookHoleYs(p)) {
+      const cut = c => { const d = Manifold.difference(acc, c); acc.delete(); c.delete(); acc = d; };
+      let cyl = Manifold.cylinder(pt + 2, hr, hr, 32).rotate(0, 90, 0).translate([-1, y, 0]);
+      cut(cyl);
+      const headR = (p.headD || 0) / 2;
+      if (headR > hr + 0.1) {                      // 皿取り（ネジ頭を沈める円錐）
+        const cs = headR - hr;                     // 90°の皿ネジ相当
+        const r2 = hr + (headR - hr) * (cs + 0.5) / cs;
+        cut(Manifold.cylinder(cs + 0.5, hr, r2, 32).rotate(0, 90, 0).translate([pt - cs, y, 0]));
+      }
+    }
+  }
+  // 他のプリミティブと同じく、外形の中心を原点にそろえる（回転やサイズ表示の基準が一致する）
+  const b = hookBounds(p);
+  const t = acc.translate([-(b.minx + b.maxx) / 2, -(b.miny + b.maxy) / 2, -(b.minz + b.maxz) / 2]);
+  acc.delete();
+  return t;
+}
+
 function buildGeometry(type, p) {
   switch (type) {
+    case 'hook': {
+      // 実際の立体は hookToManifold が watertight に作る。ここは配置用の外形サイズだけ分かればよい。
+      const b = hookBounds(p);
+      return new THREE.BoxGeometry(Math.max(0.1, b.maxx - b.minx), Math.max(0.1, b.maxy - b.miny), Math.max(0.1, b.maxz - b.minz));
+    }
     case 'box': {
       const f = Math.min(p.fillet || 0, Math.min(p.w, p.h, p.d) / 2 - 0.01);
       if (f > 0.05) return new RoundedBoxGeometry(p.w, p.h, p.d, 4, f);
@@ -932,6 +1120,12 @@ function nodeToManifold(node) {
   node.updateWorldMatrix(true, false);
   if (node.userData.kind === 'svg') return svgToManifold(node);
   if (node.userData.kind === 'primitive' && node.userData.type === 'text') return textToManifold(node);
+  if (node.userData.kind === 'primitive' && node.userData.type === 'hook') {
+    let acc = hookToManifold(node);
+    if (!acc) return null;
+    const tm = acc.transform([...node.matrixWorld.elements]); acc.delete();
+    return tm;
+  }
   if (node.userData.kind !== 'group') {
     const g = leafGeometry(node); if (!g) return null;
     let man = null;
@@ -1905,6 +2099,13 @@ function bakeScale(node) {
   else if (t === 'trapezoid') { mul('wb', s.x); mul('wt', s.x); mul('h', s.y); mul('d', s.z); }
   else if (t === 'triangle') { mul('w', s.x); mul('h', s.y); mul('d', s.z); }
   else if (t === 'text') { mul('size', (s.x + s.y) / 2); mul('depth', s.z); }
+  else if (t === 'hook') {
+    mul('arm', s.x); mul('gap', s.x); mul('plateT', s.x);
+    mul('t', s.y); mul('drop', s.y); mul('rise', s.y); mul('plateH', s.y); mul('gusset', s.y);
+    mul('tw', s.z); mul('plateW', s.z);
+    mul('bend', Math.min(s.x, s.y)); mul('plateR', Math.min(s.y, s.z));
+    mul('holeD', all); mul('headD', all);
+  }
   node.scale.set(1, 1, 1);
   return true;
 }
