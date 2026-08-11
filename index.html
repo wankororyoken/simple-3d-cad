@@ -632,8 +632,8 @@ const defaults = {
   trapezoid:{ wb: 40, wt: 20, h: 30, d: 30 },
   triangle: { kind: 'iso', w: 40, h: 35, d: 30 },
   text:     { text: 'ABC', size: 14, depth: 6 },
-  hook:     { preset: 'j', sect: 'round', t: 8, tw: 8, arm: 30, drop: 25, gap: 18, rise: 12, bend: 6,
-              plateW: 24, plateH: 44, plateT: 5, plateR: 5, holeD: 4.2, holeN: 2, headD: 8, gusset: 8, seg: 32 },
+  hook:     { preset: 'j', sect: 'round', t: 8, tw: 8, arm: 30, drop: 25, gap: 18, rise: 12, bend: 15,
+              plateW: 34, plateH: 44, plateT: 5, plateR: 5, holeD: 4.2, holeN: 2, headD: 8, gusset: 8, seg: 32 },
   sweep:    { pts: [[0, 0], [30, 0]], rads: [0, 0], sect: 'round', t: 8, tw: 8, seg: 32 },
 };
 const dimDefs = {
@@ -779,16 +779,36 @@ function hookCorners(p) {
       return [[0, 0], [arm, 0], [arm, -drop], [arm - gap, -drop], [arm - gap, -drop + rise]];
   }
 }
-function hookPathPoints(p) {
-  // 曲げ半径が断面の半分より小さいと内側で形が自分にめり込む（Manifold が破綻する）ので下限を設ける
-  const bend = Math.max(p.bend || 0, Math.max(0.5, p.t) / 2 + 0.1);
-  const raw = roundedPathFromCorners(hookCorners(p), bend).getPoints(12);
+function arcPts(cx, cy, r, a0, a1, n) {
+  const out = [];
+  for (let i = 0; i <= n; i++) { const a = a0 + (a1 - a0) * i / n; out.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]); }
+  return out;
+}
+function dedupe(raw) {
   const pts = [];
   for (const q of raw) {
-    if (pts.length && Math.hypot(q.x - pts[pts.length - 1][0], q.y - pts[pts.length - 1][1]) < 1e-4) continue;
-    pts.push([q.x, q.y]);
+    const x = q.x != null ? q.x : q[0], y = q.y != null ? q.y : q[1];
+    if (pts.length && Math.hypot(x - pts[pts.length - 1][0], y - pts[pts.length - 1][1]) < 1e-4) continue;
+    pts.push([x, y]);
   }
   return pts;
+}
+function hookPathPoints(p) {
+  // 曲げ半径が断面の半分より小さいと内側で形が自分にめり込む（Manifold が破綻する）ので下限を設ける
+  const minR = Math.max(0.5, p.t) / 2 + 0.1;
+  if (p.preset === 's') {
+    // S字は「く」の字の角丸めでは作れない（180°を超えて回り込む輪が2つ必要）ので、
+    // 円弧を直接組み立てる。原点で接する上下2つの輪（開き側が互い違い＝Sになる）。
+    const R = Math.max(minR, (p.gap || 1) / 2);
+    const top = arcPts(0, R, R, -Math.PI / 2, Math.PI * 200 / 180, 14);
+    const bot = arcPts(0, -R, R, Math.PI / 2, -Math.PI * 200 / 180, 14);
+    return dedupe([...top, ...bot]);
+  }
+  // 大きな半径を渡し、roundedPathFromCorners 内部の「隣り合う辺の49%まで」という自動クランプに
+  // 任せることで、角ごとに「その場で可能な限り丸い」曲線になる（実物のフックのカーブに近づく）。
+  // 'bend' はそれに対する上限（細かく角張らせたい時にユーザーが下げられるようにするため）。
+  const bend = Math.max(minR, p.bend || 0);
+  return dedupe(roundedPathFromCorners(hookCorners(p), bend).getPoints(16));
 }
 function sectionPoints(p) {
   const hu = Math.max(0.5, p.t) / 2, hv = Math.max(0.5, p.tw) / 2;
@@ -874,16 +894,25 @@ function hookToManifold(node) {
       fuse(gg);
     }
     const hr = Math.max(0.3, (p.holeD || 0) / 2);
-    if (hr > 0.3) for (const y of hookHoleYs(p)) {
-      const cut = c => { const d = Manifold.difference(acc, c); acc.delete(); c.delete(); acc = d; };
-      let cyl = Manifold.cylinder(pt + 2, hr, hr, 32).rotate(0, 90, 0).translate([-1, y, 0]);
-      cut(cyl);
+    if (hr > 0.3) {
       const headR = (p.headD || 0) / 2;
-      if (headR > hr + 0.1) {                      // 皿取り（ネジ頭を沈める円錐）
-        const cs = headR - hr;                     // 90°の皿ネジ相当
-        const r2 = hr + (headR - hr) * (cs + 0.5) / cs;
-        cut(Manifold.cylinder(cs + 0.5, hr, r2, 32).rotate(0, 90, 0).translate([pt - cs, y, 0]));
-      }
+      // アームは断面の幅ぶん（Z方向 ±hv）どこまで行っても常に存在するので、穴をそこから外へずらして
+      // 初めてドライバーが通る。ずらせる余地が無ければ（板が狭い等）その分だけ我慢して寄せる。
+      const hv = Math.max(0.5, p.tw) / 2, outerR = Math.max(hr, headR);
+      const edge = 1.5;
+      const zOff = Math.max(0, Math.min(hv + outerR + edge, pw / 2 - outerR - edge));
+      const ys = hookHoleYs(p);
+      ys.forEach((y, i) => {
+        const z = ys.length > 1 ? (i % 2 === 0 ? zOff : -zOff) : zOff;   // 2本以上なら左右に振り分ける
+        const cut = c => { const d = Manifold.difference(acc, c); acc.delete(); c.delete(); acc = d; };
+        let cyl = Manifold.cylinder(pt + 2, hr, hr, 32).rotate(0, 90, 0).translate([-1, y, z]);
+        cut(cyl);
+        if (headR > hr + 0.1) {                     // 皿取り（ネジ頭を沈める円錐）
+          const cs = headR - hr;                     // 90°の皿ネジ相当
+          const r2 = hr + (headR - hr) * (cs + 0.5) / cs;
+          cut(Manifold.cylinder(cs + 0.5, hr, r2, 32).rotate(0, 90, 0).translate([pt - cs, y, z]));
+        }
+      });
     }
   }
   // 他のプリミティブと同じく、外形の中心を原点にそろえる（回転やサイズ表示の基準が一致する）
