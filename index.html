@@ -101,7 +101,7 @@
   #toast.show { opacity: 1; }
   .divider { height: 1px; background: var(--line); margin: 4px 0 10px; }
   .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; z-index: 100; }
-  .modal { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; width: 560px; max-width: 92vw; box-shadow: 0 20px 60px rgba(0,0,0,.5); }
+  .modal { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; width: 560px; max-width: 92vw; max-height: 92vh; overflow-y: auto; box-shadow: 0 20px 60px rgba(0,0,0,.5); }
   .modal h3 { margin: 0 0 14px; font-size: 15px; }
   .trace-body { display: grid; grid-template-columns: 1fr 200px; gap: 16px; }
   #tracePreview { width: 100%; background: #fff; border: 1px solid var(--line); border-radius: 8px; image-rendering: pixelated; max-height: 320px; object-fit: contain; }
@@ -410,7 +410,7 @@
       <button id="peFit" style="flex-shrink:0;" title="描いた線がちょうど収まる表示範囲にします">全体を表示</button>
     </div>
     <svg id="peCanvas" viewBox="-80 -60 160 120"
-         style="width:100%; aspect-ratio:4/3; background:#0d1522; border:1px solid var(--line); border-radius:8px; touch-action:none; display:block;">
+         style="width:100%; aspect-ratio:8/5; background:#0d1522; border:1px solid var(--line); border-radius:8px; touch-action:none; display:block;">
       <g id="peGrid"></g>
       <g id="peFlip" transform="scale(1,-1)">
         <path id="peBody" fill="none" stroke="#6ea8fe" stroke-opacity="0.55" stroke-linejoin="round" stroke-linecap="round"/>
@@ -2319,7 +2319,7 @@ function bakeScale(node) {
     doHollow(wall, lidOpts, tube);
   };
   // ---- 2D パスエディタ（線を描いて立体化）----
-  const PE_ASPECT = 0.75;           // キャンバスの縦横比（CSS の aspect-ratio:4/3 と一致させること）
+  const PE_ASPECT = 0.625;          // キャンバスの縦横比（CSS の aspect-ratio:8/5 と一致させること）
   let peView = 160;                 // 表示範囲（mm・横幅）
   let peCx = 0, peCy = 0;           // 表示の中心（mm）。原点固定だと端に描いた形が見切れるため。
   const peH = () => peView * PE_ASPECT;
