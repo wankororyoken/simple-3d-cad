@@ -636,7 +636,7 @@ const defaults = {
   hook:     { preset: 'j', sect: 'round', t: 8, tw: 8, arm: 30, drop: 25, gap: 18, rise: 12, bend: 15,
               plateW: 34, plateH: 44, plateT: 5, plateR: 5, holeD: 4.2, holeN: 2, headD: 8, gusset: 8, seg: 32 },
   sweep:    { pts: [[0, 0], [30, 0]], rads: [0, 0], sect: 'round', t: 8, tw: 8, seg: 32 },
-  skadis:   { slotW: 5, slotH: 15, clear: 0.4, thick: 5, armH: 4, hookT: 3, hookDrop: 8, pegN: '2', colsN: '1', pitch: 40, pitchX: 20,
+  skadis:   { slotW: 5, slotH: 15, clear: 0.4, thick: 5, armH: 4, hookT: 3, hookDrop: 8, pegN: '2', colsN: '1', colLayout: 'stagger', pitch: 40, pitchX: 20, pitchRow: 40,
               flangeW: 16, flangeH: 60, flangeT: 3, flangeR: 3 },
 };
 const dimDefs = {
@@ -659,7 +659,7 @@ const dimDefs = {
          ['gusset','付け根の補強'],['holeN','ネジ穴の数'],['holeD','ネジ穴径'],['headD','皿取り径(0=なし)'],['seg','分割数']],
   sweep: [['sect','断面の形'],['t','太さ(縦)'],['tw','太さ(横)'],['seg','分割数']],
   skadis: [['slotW','穴の幅(規格5mm)'],['slotH','穴の高さ(規格15mm)'],['clear','すきま(挿し心地)'],['thick','ボード厚み'],
-           ['armH','ツメの高さ'],['hookT','ツメの厚み'],['hookDrop','ツメの下がり量'],['pegN','ツメの段数(縦)'],['pitch','縦の間隔(規格40mm)'],['colsN','ツメの列数(横)'],['pitchX','横の間隔(規格20mm)'],
+           ['armH','ツメの高さ'],['hookT','ツメの厚み'],['hookDrop','ツメの下がり量'],['pegN','ツメの段数(縦)'],['pitch','縦の間隔(規格40mm)'],['colsN','ツメの列数(横)'],['colLayout','列の並べ方'],['pitchX','千鳥の横間隔(規格20mm)'],['pitchRow','同じ高さの横間隔(規格40mm)'],
            ['flangeW','取付板 幅'],['flangeH','取付板 高さ'],['flangeT','取付板 厚み'],['flangeR','取付板 角丸め']],
 };
 // 内部は半径で保持するが入力欄では直径表示にするキー
@@ -672,7 +672,8 @@ const dimSelects = {
   preset: [['j', 'J字（フック）'], ['u', 'U字（工具掛け）'], ['l', 'L字（棚受け）'], ['s', 'S字（両端フック・壁付けなし）']],
   sect: [['round', '丸・楕円'], ['rrect', '角丸'], ['rect', '角']],
   pegN: [['1', '1段'], ['2', '2段'], ['3', '3段'], ['4', '4段']],
-  colsN: [['1', '1列'], ['2', '2列（千鳥）'], ['3', '3列（千鳥）'], ['4', '4列（千鳥）']],
+  colsN: [['1', '1列'], ['2', '2列'], ['3', '3列'], ['4', '4列']],
+  colLayout: [['stagger', '千鳥（隣の列を縦に20mmずらす）'], ['row', '同じ高さに横一列（40mm間隔）']],
 };
 
 let jpFont = null;   // opentype.js font (Japanese); 文字 button stays disabled until ready
@@ -944,21 +945,22 @@ function skadisParams(p) {
   const n = Math.max(1, Math.min(4, Math.round(Number(p.pegN) || 1)));
   const cols = Math.max(1, Math.min(4, Math.round(Number(p.colsN) || 1)));
   const pitch = Math.max(armH + drop + 1, p.pitch || 40);
-  const pitchX = Math.max(tabW + 1, p.pitchX || 20);
-  return { tabW, armH, hookT, drop, back, armLen, n, cols, pitch, pitchX };
+  const inRow = p.colLayout === 'row';                                    // true=同じ高さに並べる（規格上は横40mm間隔）
+  const pitchX = Math.max(tabW + 1, (inRow ? p.pitchRow : p.pitchX) || (inRow ? 40 : 20));
+  return { tabW, armH, hookT, drop, back, armLen, n, cols, pitch, pitchX, inRow };
 }
 // 全ツメの位置 [z, y]。SKADISの穴は千鳥配置：同じ列は縦40mm間隔、隣の列は横20mm・縦20mmずれる。
 function skadisTabs(p) {
-  const { n, cols, pitch, pitchX } = skadisParams(p);
-  const out = [], shift = cols > 1 ? pitch / 4 : 0;   // 千鳥ぶんの偏りを打ち消して全体を中央にそろえる
+  const { n, cols, pitch, pitchX, inRow } = skadisParams(p);
+  const out = [], shift = cols > 1 && !inRow ? pitch / 4 : 0;   // 千鳥ぶんの偏りを打ち消して全体を中央にそろえる
   for (let c = 0; c < cols; c++) for (let r = 0; r < n; r++)
-    out.push([(c - (cols - 1) / 2) * pitchX, (r - (n - 1) / 2) * pitch + (c % 2) * (pitch / 2) - shift]);
+    out.push([(c - (cols - 1) / 2) * pitchX, (r - (n - 1) / 2) * pitch + (inRow ? 0 : (c % 2) * (pitch / 2)) - shift]);
   return out;
 }
 function skadisBounds(p) {
-  const { tabW, armH, drop, armLen, n, cols, pitch, pitchX } = skadisParams(p);
+  const { tabW, armH, drop, armLen, n, cols, pitch, pitchX, inRow } = skadisParams(p);
   const flangeW = Math.max((cols - 1) * pitchX + tabW + 4, p.flangeW || 16);
-  const tabSpan = (n - 1) * pitch + (cols > 1 ? pitch / 2 : 0) + armH + drop;
+  const tabSpan = (n - 1) * pitch + (cols > 1 && !inRow ? pitch / 2 : 0) + armH + drop;
   const flangeH = Math.max(tabSpan + 4, p.flangeH || 16);
   return { minx: -armLen, maxx: Math.max(0.5, p.flangeT || 2), miny: -flangeH / 2, maxy: flangeH / 2, minz: -flangeW / 2, maxz: flangeW / 2 };
 }
@@ -2355,7 +2357,7 @@ function bakeScale(node) {
   else if (t === 'skadis') {
     mul('thick', s.x); mul('hookT', s.x); mul('flangeT', s.x);
     mul('flangeH', s.y); mul('pitch', s.y); mul('armH', s.y); mul('hookDrop', s.y); mul('slotH', s.y);
-    mul('flangeW', s.z); mul('slotW', s.z); mul('clear', s.z); mul('pitchX', s.z);
+    mul('flangeW', s.z); mul('slotW', s.z); mul('clear', s.z); mul('pitchX', s.z); mul('pitchRow', s.z);
   }
   else if (t === 'sweep') {
     if (Array.isArray(p.pts)) p.pts = p.pts.map(q => [q[0] * s.x, q[1] * s.y]);
