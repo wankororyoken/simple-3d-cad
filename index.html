@@ -172,6 +172,7 @@
         <button data-add="trapezoid">⏢ 台形</button>
         <button data-add="triangle">▲ 三角形</button>
         <button data-add="hook">🪝 フック</button>
+        <button data-add="skadis">📌 SKADISピン</button>
         <button id="drawPathBtn">✏ 線を描いて立体化</button>
         <button data-add="text" disabled>🅰 文字(読込中)</button>
       </div>
@@ -614,7 +615,7 @@ scene.add(transform);
 // ============================================================
 let uid = 0, counter = 0;
 const palette = [0x4f9cff, 0xef8c5b, 0x5bd6a0, 0xc98cff, 0xf0d35b, 0xff7aa8];
-const labels = { box:'直方体', roundedprism:'角丸ボックス', cylinder:'円柱', taper:'円錐台', ellipse:'楕円柱', sphere:'球', cone:'円錐', pyramid:'四角錐', torus:'トーラス', boxtaper:'角錐台', trapezoid:'台形', triangle:'三角形', text:'文字', hook:'フック', sweep:'パス立体', group:'結合形状' };
+const labels = { box:'直方体', roundedprism:'角丸ボックス', cylinder:'円柱', taper:'円錐台', ellipse:'楕円柱', sphere:'球', cone:'円錐', pyramid:'四角錐', torus:'トーラス', boxtaper:'角錐台', trapezoid:'台形', triangle:'三角形', text:'文字', hook:'フック', sweep:'パス立体', skadis:'SKADISピン', group:'結合形状' };
 const svgDimDefs = [['depth','厚み mm'],['size','大きさ mm'],['wall','線の太さ mm(0=塗り)']];
 const opLabel = { union:'合体', subtract:'くり抜き', intersect:'共通部分', none:'グループ' };
 
@@ -635,6 +636,8 @@ const defaults = {
   hook:     { preset: 'j', sect: 'round', t: 8, tw: 8, arm: 30, drop: 25, gap: 18, rise: 12, bend: 15,
               plateW: 34, plateH: 44, plateT: 5, plateR: 5, holeD: 4.2, holeN: 2, headD: 8, gusset: 8, seg: 32 },
   sweep:    { pts: [[0, 0], [30, 0]], rads: [0, 0], sect: 'round', t: 8, tw: 8, seg: 32 },
+  skadis:   { hole: 5, clear: 0.4, thick: 4.5, engage: 2, tipReduce: 1.4, pegN: '2', pitch: 20,
+              flangeW: 16, flangeH: 38, flangeT: 2.4, flangeR: 3 },
 };
 const dimDefs = {
   box: [['w','幅 X'],['h','高さ Y'],['d','奥行 Z'],['fillet','角丸め r']],
@@ -655,6 +658,9 @@ const dimDefs = {
          ['plateH','ベース高さ'],['plateW','ベース幅'],['plateT','ベース厚み'],['plateR','ベース角丸め'],
          ['gusset','付け根の補強'],['holeN','ネジ穴の数'],['holeD','ネジ穴径'],['headD','皿取り径(0=なし)'],['seg','分割数']],
   sweep: [['sect','断面の形'],['t','太さ(縦)'],['tw','太さ(横)'],['seg','分割数']],
+  skadis: [['hole','穴のサイズ(規格5mm)'],['clear','すきま(挿し心地)'],['thick','ボード厚み'],
+           ['engage','裏側の突き出し'],['tipReduce','先端の細り'],['pegN','ピンの本数'],['pitch','ピン間隔(規格20mm)'],
+           ['flangeW','取付板 幅'],['flangeH','取付板 高さ'],['flangeT','取付板 厚み'],['flangeR','取付板 角丸め']],
 };
 // 内部は半径で保持するが入力欄では直径表示にするキー
 const diaKeys = {
@@ -665,6 +671,7 @@ const dimSelects = {
   kind: [['iso', '二等辺（左右対称）'], ['right_l', '直角（左下が直角）'], ['right_r', '直角（右下が直角）']],
   preset: [['j', 'J字（フック）'], ['u', 'U字（工具掛け）'], ['l', 'L字（棚受け）'], ['s', 'S字（両端フック・壁付けなし）']],
   sect: [['round', '丸・楕円'], ['rrect', '角丸'], ['rect', '角']],
+  pegN: [['1', '1本'], ['2', '2本（安定）'], ['3', '3本'], ['4', '4本']],
 };
 
 let jpFont = null;   // opentype.js font (Japanese); 文字 button stays disabled until ready
@@ -922,6 +929,64 @@ function hookToManifold(node) {
   return t;
 }
 
+// ---- SKADIS（IKEAの有孔ボード）に挿すピン ----
+// 座標の決め方：ボードは YZ 平面。取付板(フランジ)は x=0〜flangeT（他の面と組み合わせる側）。
+// ピンはそこから -X 方向（ボードの穴へ差し込む向き）へ伸びる。Y=上下（ピンの間隔）、Z=左右（フランジの幅）。
+// 実測でよく使われる値：穴 5×5mm・格子ピッチ20mm・ボード厚 約4.5mm（現物に合わせて微調整してください）。
+function skadisParams(p) {
+  const sh = Math.max(1, (p.hole || 5) - (p.clear || 0));         // ピンの断面（穴より少し小さく＝差し込みやすく）
+  const tip = Math.max(0.6, sh - (p.tipReduce || 0));              // 先端はさらに少し細く（自己調心・挿しやすさ）
+  const shaftLen = Math.max(2, (p.thick || 4.5) + (p.engage || 0));
+  const n = Math.max(1, Math.min(4, Math.round(Number(p.pegN) || 1)));
+  const pitch = Math.max(sh + 1, p.pitch || 20);
+  return { sh, tip, shaftLen, n, pitch };
+}
+function skadisBounds(p) {
+  const { sh, shaftLen, n, pitch } = skadisParams(p);
+  const flangeW = Math.max(sh + 2, p.flangeW || 16), flangeH = Math.max(sh + 2, (n - 1) * pitch + sh + 2, p.flangeH || 16);
+  return {
+    minx: -shaftLen, maxx: Math.max(0.5, p.flangeT || 2),
+    miny: -flangeH / 2, maxy: flangeH / 2,
+    minz: -flangeW / 2, maxz: flangeW / 2,
+  };
+}
+function skadisToManifold(node) {
+  const p = node.userData.params;
+  const { sh, tip, shaftLen, n, pitch } = skadisParams(p);
+  const flangeT = Math.max(0.5, p.flangeT || 2), flangeW = Math.max(sh + 2, p.flangeW || 16);
+  const flangeH = Math.max(sh + 2, (n - 1) * pitch + sh + 2, p.flangeH || 16);
+  const flangeR = Math.max(0, Math.min(p.flangeR || 0, Math.min(flangeW, flangeH) / 2 - 0.01));
+  const fuse = (acc, geo) => {
+    let m = null;
+    try { m = geomToManifold(geo); } catch (e) { console.error(e); }
+    if (geo.dispose) geo.dispose();
+    if (!m) return acc;
+    if (!acc) return m;
+    const u = Manifold.union(acc, m); acc.delete(); m.delete(); return u;
+  };
+  let acc = null;
+  const gp = new THREE.ExtrudeGeometry(roundedRectShape(flangeW, flangeH, flangeR), { depth: flangeT, bevelEnabled: false, curveSegments: 8 });
+  gp.rotateY(Math.PI / 2);                        // 押し出し方向を +X へ（フランジは x=0〜flangeT）
+  acc = fuse(acc, gp);
+  const overlap = 0.6;                            // フランジとピンの継ぎ目を確実に溶着させる重なり
+  for (let i = 0; i < n; i++) {
+    const y = (i - (n - 1) / 2) * pitch;
+    // ピン本体は「根元(フランジ側)=sh、先端=tip」の緩いテーパー（boxtaper と同じ、頂点を直接拡縮する手法）
+    const g = new THREE.BoxGeometry(1, 1, 1);
+    const pos = g.attributes.position;
+    for (let v = 0; v < pos.count; v++) {
+      const base = pos.getX(v) > 0;                // +0.5=根元(フル幅)／-0.5=先端(細い)
+      pos.setY(v, pos.getY(v) * (base ? sh : tip));
+      pos.setZ(v, pos.getZ(v) * (base ? sh : tip));
+      pos.setX(v, pos.getX(v) * (shaftLen + overlap));
+    }
+    pos.needsUpdate = true;
+    g.translate(-(shaftLen - overlap) / 2, y, 0);  // x: [-shaftLen, +overlap] （+overlap分だけフランジに食い込む）
+    acc = fuse(acc, g);
+  }
+  return acc;
+}
+
 // ---- 自由なパス（線を描いて立体化）----
 // pts: 折れ線の頂点[[x,y],...]、rads: 各頂点の角丸め半径。断面の指定はフックと共通。
 function sweepPathPoints(p) {
@@ -980,6 +1045,11 @@ function buildGeometry(type, p) {
     case 'hook': {
       // 実際の立体は hookToManifold が watertight に作る。ここは配置用の外形サイズだけ分かればよい。
       const b = hookBounds(p);
+      return new THREE.BoxGeometry(Math.max(0.1, b.maxx - b.minx), Math.max(0.1, b.maxy - b.miny), Math.max(0.1, b.maxz - b.minz));
+    }
+    case 'skadis': {
+      // 実際の立体は skadisToManifold が watertight に作る。ここは配置用の外形サイズだけ分かればよい。
+      const b = skadisBounds(p);
       return new THREE.BoxGeometry(Math.max(0.1, b.maxx - b.minx), Math.max(0.1, b.maxy - b.miny), Math.max(0.1, b.maxz - b.minz));
     }
     case 'box': {
@@ -1285,6 +1355,14 @@ function nodeToManifold(node) {
     let acc = sweepToManifold(node);
     if (!acc) return null;
     const tm = acc.transform([...node.matrixWorld.elements]); acc.delete();
+    return tm;
+  }
+  if (node.userData.kind === 'primitive' && node.userData.type === 'skadis') {
+    let acc = skadisToManifold(node);
+    if (!acc) return null;
+    const b = skadisBounds(node.userData.params);
+    const t0 = acc.translate([-(b.minx + b.maxx) / 2, -(b.miny + b.maxy) / 2, -(b.minz + b.maxz) / 2]); acc.delete();
+    const tm = t0.transform([...node.matrixWorld.elements]); t0.delete();
     return tm;
   }
   if (node.userData.kind === 'primitive' && node.userData.type === 'hook') {
@@ -2267,6 +2345,12 @@ function bakeScale(node) {
   else if (t === 'trapezoid') { mul('wb', s.x); mul('wt', s.x); mul('h', s.y); mul('d', s.z); }
   else if (t === 'triangle') { mul('w', s.x); mul('h', s.y); mul('d', s.z); }
   else if (t === 'text') { mul('size', (s.x + s.y) / 2); mul('depth', s.z); }
+  else if (t === 'skadis') {
+    mul('thick', s.x); mul('engage', s.x); mul('flangeT', s.x);
+    mul('flangeH', s.y); mul('pitch', s.y);
+    mul('flangeW', s.z);
+    mul('hole', (s.y + s.z) / 2); mul('clear', (s.y + s.z) / 2); mul('tipReduce', (s.y + s.z) / 2);
+  }
   else if (t === 'sweep') {
     if (Array.isArray(p.pts)) p.pts = p.pts.map(q => [q[0] * s.x, q[1] * s.y]);
     if (Array.isArray(p.rads)) p.rads = p.rads.map(r => r * Math.min(s.x, s.y));
