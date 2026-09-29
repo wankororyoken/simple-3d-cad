@@ -636,8 +636,8 @@ const defaults = {
   hook:     { preset: 'j', sect: 'round', t: 8, tw: 8, arm: 30, drop: 25, gap: 18, rise: 12, bend: 15,
               plateW: 34, plateH: 44, plateT: 5, plateR: 5, holeD: 4.2, holeN: 2, headD: 8, gusset: 8, seg: 32 },
   sweep:    { pts: [[0, 0], [30, 0]], rads: [0, 0], sect: 'round', t: 8, tw: 8, seg: 32 },
-  skadis:   { hole: 5, clear: 0.4, thick: 4.5, engage: 2, tipReduce: 1.4, pegN: '2', pitch: 20,
-              flangeW: 16, flangeH: 38, flangeT: 2.4, flangeR: 3 },
+  skadis:   { slotW: 5, slotH: 15, clear: 0.4, thick: 5, armH: 4, hookT: 3, hookDrop: 8, pegN: '2', pitch: 40,
+              flangeW: 16, flangeH: 60, flangeT: 3, flangeR: 3 },
 };
 const dimDefs = {
   box: [['w','幅 X'],['h','高さ Y'],['d','奥行 Z'],['fillet','角丸め r']],
@@ -658,8 +658,8 @@ const dimDefs = {
          ['plateH','ベース高さ'],['plateW','ベース幅'],['plateT','ベース厚み'],['plateR','ベース角丸め'],
          ['gusset','付け根の補強'],['holeN','ネジ穴の数'],['holeD','ネジ穴径'],['headD','皿取り径(0=なし)'],['seg','分割数']],
   sweep: [['sect','断面の形'],['t','太さ(縦)'],['tw','太さ(横)'],['seg','分割数']],
-  skadis: [['hole','穴のサイズ(規格5mm)'],['clear','すきま(挿し心地)'],['thick','ボード厚み'],
-           ['engage','裏側の突き出し'],['tipReduce','先端の細り'],['pegN','ピンの本数'],['pitch','ピン間隔(規格20mm)'],
+  skadis: [['slotW','穴の幅(規格5mm)'],['slotH','穴の高さ(規格15mm)'],['clear','すきま(挿し心地)'],['thick','ボード厚み'],
+           ['armH','ツメの高さ'],['hookT','ツメの厚み'],['hookDrop','ツメの下がり量'],['pegN','ツメの本数'],['pitch','ツメの間隔(縦ピッチ40mm)'],
            ['flangeW','取付板 幅'],['flangeH','取付板 高さ'],['flangeT','取付板 厚み'],['flangeR','取付板 角丸め']],
 };
 // 内部は半径で保持するが入力欄では直径表示にするキー
@@ -929,32 +929,33 @@ function hookToManifold(node) {
   return t;
 }
 
-// ---- SKADIS（IKEAの有孔ボード）に挿すピン ----
-// 座標の決め方：ボードは YZ 平面。取付板(フランジ)は x=0〜flangeT（他の面と組み合わせる側）。
-// ピンはそこから -X 方向（ボードの穴へ差し込む向き）へ伸びる。Y=上下（ピンの間隔）、Z=左右（フランジの幅）。
-// 実測でよく使われる値：穴 5×5mm・格子ピッチ20mm・ボード厚 約4.5mm（現物に合わせて微調整してください）。
+// ---- SKADIS（IKEAの有孔ボード）に掛けるツメ ----
+// SKADISの穴は縦長の長穴（幅5×高さ15mm、縦ピッチ40mm・横ピッチ20mm、ボード厚 約5mm）。
+// 部品側の「L字のツメ」を長穴に通し、下へずらして穴の縁の裏側に引っかけて固定する。
+// 座標：ボード面は YZ 平面。取付板(フランジ)は x=0〜flangeT、ツメはそこから -X（ボードの中）へ伸びる。Y=上下、Z=左右。
 function skadisParams(p) {
-  const sh = Math.max(1, (p.hole || 5) - (p.clear || 0));         // ピンの断面（穴より少し小さく＝差し込みやすく）
-  const tip = Math.max(0.6, sh - (p.tipReduce || 0));              // 先端はさらに少し細く（自己調心・挿しやすさ）
-  const shaftLen = Math.max(2, (p.thick || 4.5) + (p.engage || 0));
+  const tabW = Math.max(1, (p.slotW || 5) - (p.clear || 0));           // ツメの幅（Z）＝穴の幅−すきま
+  const armH = Math.max(1.5, p.armH || 4);                               // 穴を通る水平部分の高さ（Y）
+  const hookT = Math.max(1, p.hookT || 3);                               // 裏側に回り込む爪の厚み（X）
+  const drop = Math.max(1, Math.min(p.hookDrop || 8, (p.slotH || 15) - armH - 0.5));   // 爪が下へ伸びる長さ（穴の高さに収まるよう制限）
+  const back = 0.3;                                                       // ボード裏面と爪の間の遊び
+  const armLen = (p.thick || 5) + back + hookT;                           // フランジ面から爪の先までの水平距離
   const n = Math.max(1, Math.min(4, Math.round(Number(p.pegN) || 1)));
-  const pitch = Math.max(sh + 1, p.pitch || 20);
-  return { sh, tip, shaftLen, n, pitch };
+  const pitch = Math.max(armH + drop + 1, p.pitch || 40);
+  return { tabW, armH, hookT, drop, back, armLen, n, pitch };
 }
 function skadisBounds(p) {
-  const { sh, shaftLen, n, pitch } = skadisParams(p);
-  const flangeW = Math.max(sh + 2, p.flangeW || 16), flangeH = Math.max(sh + 2, (n - 1) * pitch + sh + 2, p.flangeH || 16);
-  return {
-    minx: -shaftLen, maxx: Math.max(0.5, p.flangeT || 2),
-    miny: -flangeH / 2, maxy: flangeH / 2,
-    minz: -flangeW / 2, maxz: flangeW / 2,
-  };
+  const { tabW, armH, drop, armLen, n, pitch } = skadisParams(p);
+  const flangeW = Math.max(tabW + 4, p.flangeW || 16);
+  const tabSpan = (n - 1) * pitch + armH + drop;
+  const flangeH = Math.max(tabSpan + 4, p.flangeH || 16);
+  return { minx: -armLen, maxx: Math.max(0.5, p.flangeT || 2), miny: -flangeH / 2, maxy: flangeH / 2, minz: -flangeW / 2, maxz: flangeW / 2 };
 }
 function skadisToManifold(node) {
   const p = node.userData.params;
-  const { sh, tip, shaftLen, n, pitch } = skadisParams(p);
-  const flangeT = Math.max(0.5, p.flangeT || 2), flangeW = Math.max(sh + 2, p.flangeW || 16);
-  const flangeH = Math.max(sh + 2, (n - 1) * pitch + sh + 2, p.flangeH || 16);
+  const { tabW, armH, hookT, drop, armLen, n, pitch } = skadisParams(p);
+  const b = skadisBounds(p);
+  const flangeT = b.maxx, flangeW = b.maxz - b.minz, flangeH = b.maxy - b.miny;
   const flangeR = Math.max(0, Math.min(p.flangeR || 0, Math.min(flangeW, flangeH) / 2 - 0.01));
   const fuse = (acc, geo) => {
     let m = null;
@@ -964,25 +965,20 @@ function skadisToManifold(node) {
     if (!acc) return m;
     const u = Manifold.union(acc, m); acc.delete(); m.delete(); return u;
   };
-  let acc = null;
+  const box = (x0, x1, y0, y1) => {              // x0<x1, y0<y1 の範囲で、Zはツメの幅ぶんの箱
+    const g = new THREE.BoxGeometry(x1 - x0, y1 - y0, tabW);
+    g.translate((x0 + x1) / 2, (y0 + y1) / 2, 0);
+    return g;
+  };
   const gp = new THREE.ExtrudeGeometry(roundedRectShape(flangeW, flangeH, flangeR), { depth: flangeT, bevelEnabled: false, curveSegments: 8 });
-  gp.rotateY(Math.PI / 2);                        // 押し出し方向を +X へ（フランジは x=0〜flangeT）
-  acc = fuse(acc, gp);
-  const overlap = 0.6;                            // フランジとピンの継ぎ目を確実に溶着させる重なり
+  gp.rotateY(Math.PI / 2);
+  let acc = fuse(null, gp);
+  const ov = 0.6;                                 // フランジとの継ぎ目を確実に溶着させる重なり
+  const chamfer = Math.min(0.8, armH / 3);
   for (let i = 0; i < n; i++) {
     const y = (i - (n - 1) / 2) * pitch;
-    // ピン本体は「根元(フランジ側)=sh、先端=tip」の緩いテーパー（boxtaper と同じ、頂点を直接拡縮する手法）
-    const g = new THREE.BoxGeometry(1, 1, 1);
-    const pos = g.attributes.position;
-    for (let v = 0; v < pos.count; v++) {
-      const base = pos.getX(v) > 0;                // +0.5=根元(フル幅)／-0.5=先端(細い)
-      pos.setY(v, pos.getY(v) * (base ? sh : tip));
-      pos.setZ(v, pos.getZ(v) * (base ? sh : tip));
-      pos.setX(v, pos.getX(v) * (shaftLen + overlap));
-    }
-    pos.needsUpdate = true;
-    g.translate(-(shaftLen - overlap) / 2, y, 0);  // x: [-shaftLen, +overlap] （+overlap分だけフランジに食い込む）
-    acc = fuse(acc, g);
+    acc = fuse(acc, box(-armLen, ov, y - armH / 2, y + armH / 2));                   // 穴を通る水平部分
+    acc = fuse(acc, box(-armLen, -armLen + hookT, y - armH / 2 - drop, y + armH / 2)); // 裏側に回る爪（下へ伸びる）
   }
   return acc;
 }
@@ -2346,10 +2342,9 @@ function bakeScale(node) {
   else if (t === 'triangle') { mul('w', s.x); mul('h', s.y); mul('d', s.z); }
   else if (t === 'text') { mul('size', (s.x + s.y) / 2); mul('depth', s.z); }
   else if (t === 'skadis') {
-    mul('thick', s.x); mul('engage', s.x); mul('flangeT', s.x);
-    mul('flangeH', s.y); mul('pitch', s.y);
-    mul('flangeW', s.z);
-    mul('hole', (s.y + s.z) / 2); mul('clear', (s.y + s.z) / 2); mul('tipReduce', (s.y + s.z) / 2);
+    mul('thick', s.x); mul('hookT', s.x); mul('flangeT', s.x);
+    mul('flangeH', s.y); mul('pitch', s.y); mul('armH', s.y); mul('hookDrop', s.y); mul('slotH', s.y);
+    mul('flangeW', s.z); mul('slotW', s.z); mul('clear', s.z);
   }
   else if (t === 'sweep') {
     if (Array.isArray(p.pts)) p.pts = p.pts.map(q => [q[0] * s.x, q[1] * s.y]);
