@@ -284,6 +284,7 @@
         <button id="delBtn" class="danger">削除</button>
       </div>
       <button id="dropBtn" title="底面をXZ平面(テーブル)に合わせる" style="margin-top:6px; width:100%">⤓ テーブルに置く</button>
+      <button id="lightenBtn" title="平らな板に穴（ハニカム・トラス・丸穴）を規則的に開けて、フィラメントを節約します" style="display:none; margin-top:6px; width:100%">🕸 肉抜き（軽量化）</button>
       <button id="hollowBtn" title="壁の厚みを残して中をくり抜く（コップ状・筒状）" style="display:none; margin-top:6px; width:100%">🥤 中空化</button>
       <button id="ungroupBtn" style="display:none; margin-top:6px; width:100%">結合を解除（中の図形に分解）</button>
       <button id="editPathBtn" title="この図形のもとになった線を、2Dエディタで描き直します" style="display:none; margin-top:6px; width:100%">✏ パスを編集</button>
@@ -342,6 +343,31 @@
 <input type="file" id="stlInput" accept=".stl" style="display:none" />
 <input type="file" id="svgInput" accept=".svg" style="display:none" />
 <input type="file" id="imgInput" accept="image/*" style="display:none" />
+
+<div id="lightenModal" class="modal-overlay" style="display:none">
+  <div class="modal" style="width:420px">
+    <h3>肉抜き（軽量化）</h3>
+    <div class="muted" style="margin-bottom:10px">いちばん薄い方向（板の厚み方向）に貫通する穴を、規則的に開けます。穴は元の図形と一緒にグループ化されるので、後から穴の部分を選んで移動・削除もできます。</div>
+    <div class="row"><label>パターン</label>
+      <select id="ltKind" style="flex:1; min-width:0;">
+        <option value="honey">ハニカム（六角形・軽さと強さのバランスが最良）</option>
+        <option value="truss">トラス（三角形・斜めの力に強い）</option>
+        <option value="circle">丸穴（シンプル・加工しやすい）</option>
+      </select>
+    </div>
+    <div class="row"><label id="ltSizeLabel">穴の大きさ</label><input type="number" id="ltSize" min="3" step="1" value="14" style="flex:1; min-width:0;"><span class="muted" style="width:28px; flex-shrink:0;">mm</span></div>
+    <div class="muted" id="ltSizeHint" style="margin:-4px 0 8px">六角形の向かい合う辺の距離です。</div>
+    <div class="row"><label>残す壁(リブ)の太さ</label><input type="number" id="ltRib" min="1" step="0.5" value="3" style="flex:1; min-width:0;"><span class="muted" style="width:28px; flex-shrink:0;">mm</span></div>
+    <div class="muted" style="margin:-4px 0 8px">穴と穴の間に残す壁。ノズル径の倍数（1.2 / 1.6 / 2.0mm…）にするとキレイに印刷できます。</div>
+    <div class="row"><label>外周の枠</label><input type="number" id="ltMargin" min="2" step="1" value="8" style="flex:1; min-width:0;"><span class="muted" style="width:28px; flex-shrink:0;">mm</span></div>
+    <div class="row"><label>上側の追加余白</label><input type="number" id="ltTop" min="0" step="1" value="0" style="flex:1; min-width:0;"><span class="muted" style="width:28px; flex-shrink:0;">mm</span></div>
+    <div class="muted" style="margin:-4px 0 14px">棒を受ける窪みなど、力がかかる部分の周りに穴を開けたくない時に、上端から指定した距離まで穴を避けます（外周の枠とは別に追加されます）。</div>
+    <div class="modal-actions">
+      <button id="ltCancel">キャンセル</button>
+      <button id="ltGo" class="primary">穴を開ける</button>
+    </div>
+  </div>
+</div>
 
 <div id="hollowModal" class="modal-overlay" style="display:none">
   <div class="modal" style="width:380px">
@@ -1787,6 +1813,127 @@ function makeLid(node, wall, gap, capH, plugH) {
   g.position.set(node.position.x + outerSize + 15, 0, node.position.z);   // 容器の隣にテーブル設置の状態で配置
   return g;
 }
+
+// ============================================================
+//  肉抜き（軽量化）：平らな板に、ハニカム／トラス／丸穴を貫通で開ける
+// ============================================================
+// 穴の輪郭（多角形）を、範囲 [x0,x1]×[y0,y1] を覆うように敷き詰めて返す。size/rib の意味はパターンごとに違う：
+//  honey=六角形の向かい合う辺の距離, truss=三角形セルの一辺, circle=直径。rib=穴と穴の間に残す壁の太さ。
+function lightenHolePolys(kind, size, rib, x0, x1, y0, y1) {
+  const polys = [], S3 = Math.sqrt(3);
+  const add = (cx, cy, pts) => {
+    let a = 0; for (let i = 0; i < pts.length; i++) { const p = pts[i], q = pts[(i + 1) % pts.length]; a += p[0] * q[1] - q[0] * p[1]; }
+    const ccw = a >= 0 ? pts : pts.slice().reverse();   // Manifold の CrossSection は反時計回りが表
+    polys.push(ccw.map(([x, y]) => [cx + x, cy + y]));
+  };
+  if (kind === 'truss') {
+    const L = size, h = L * S3 / 2, inr = L / (2 * S3), rho = inr - rib / 2;
+    if (rho < 0.4) return [];
+    const k = rho / inr;
+    for (let j = Math.floor(y0 / h) - 1; j <= Math.ceil(y1 / h) + 1; j++)
+      for (let i = Math.floor(x0 / L) - 2; i <= Math.ceil(x1 / L) + 1; i++) {
+        const xb = (i + (j & 1 ? 0.5 : 0)) * L, yb = j * h;
+        const tri = (a, b, c, cx, cy) => add(cx, cy, [a, b, c].map(v => [(v[0] - cx) * k, (v[1] - cy) * k]));
+        let cx = xb + L / 2, cy = yb + h / 3;          // 上向き三角形
+        tri([xb, yb], [xb + L, yb], [xb + L / 2, yb + h], cx, cy);
+        cx = xb + L; cy = yb + 2 * h / 3;              // 下向き三角形
+        tri([xb + L / 2, yb + h], [xb + 3 * L / 2, yb + h], [xb + L, yb], cx, cy);
+      }
+    return polys;
+  }
+  const pitch = size + rib, rowH = pitch * S3 / 2;      // 千鳥（最密）配置：ハニカムも丸穴もこの並び
+  const R = kind === 'honey' ? size / S3 : size / 2, n = kind === 'honey' ? 6 : 28;
+  const shape = [];
+  for (let t = 0; t < n; t++) { const a = (kind === 'honey' ? Math.PI / 2 : 0) + t * 2 * Math.PI / n; shape.push([R * Math.cos(a), R * Math.sin(a)]); }
+  for (let j = Math.floor(y0 / rowH) - 1; j <= Math.ceil(y1 / rowH) + 1; j++)
+    for (let i = Math.floor(x0 / pitch) - 2; i <= Math.ceil(x1 / pitch) + 1; i++)
+      add((i + (j & 1 ? 0.5 : 0)) * pitch, j * rowH, shape);
+  return polys;
+}
+
+function manifoldVolume(m) {
+  const me = m.getMesh(), vp = me.vertProperties, np = me.numProp, tv = me.triVerts;
+  let V = 0;
+  for (let i = 0; i < tv.length; i += 3) {
+    const a = tv[i] * np, b = tv[i + 1] * np, c = tv[i + 2] * np;
+    V += (vp[a] * (vp[b+1] * vp[c+2] - vp[b+2] * vp[c+1]) - vp[a+1] * (vp[b] * vp[c+2] - vp[b+2] * vp[c]) + vp[a+2] * (vp[b] * vp[c+1] - vp[b+1] * vp[c])) / 6;
+  }
+  return V;
+}
+
+// 図形 a に肉抜き穴を開ける。成功なら { tool:穴だけのManifold(ワールド座標), before, after, count, axis } を返す（呼び出し側が tool を delete）。
+function buildLightenTool(man, o) {
+  const bb = man.boundingBox();
+  const ext = [0, 1, 2].map(i => bb.max[i] - bb.min[i]);
+  const ax = ext.indexOf(Math.min(...ext));                        // いちばん薄い方向＝穴を貫通させる向き
+  // 薄い軸を Z に回して、XY平面で作業する（逆回転で戻す）
+  const fwd = ax === 2 ? null : ax === 1 ? [90, 0, 0] : [0, -90, 0];
+  const back = ax === 2 ? null : ax === 1 ? [-90, 0, 0] : [0, 90, 0];
+  const m2 = fwd ? man.rotate(fwd) : man;
+  const b2 = m2.boundingBox();
+  let region = m2.project().offset(-o.margin, 'Round');            // 外形を枠の分だけ内側へ縮めた「穴を開けてよい範囲」
+  if (o.top > 0) {                                                  // 窪みなど：上端から指定距離は穴を避ける
+    const band = new CrossSection([[[b2.min[0] - 1, b2.max[1] - o.top], [b2.max[0] + 1, b2.max[1] - o.top], [b2.max[0] + 1, b2.max[1] + 1], [b2.min[0] - 1, b2.max[1] + 1]]], 'Positive');
+    const r2 = region.subtract(band); region.delete(); band.delete(); region = r2;
+  }
+  const polys = lightenHolePolys(o.kind, o.size, o.rib, b2.min[0], b2.max[0], b2.min[1], b2.max[1]);
+  const kept = [];
+  for (const p of polys) {                                          // 範囲に「まるごと」収まる穴だけ採用（縁の欠けた半端な穴は作らない）
+    const hc = new CrossSection([p], 'Positive');
+    const full = hc.area(), inside = hc.intersect(region).area();
+    hc.delete();
+    if (full > 0 && inside >= full * 0.999) kept.push(p);
+  }
+  region.delete();
+  if (fwd) m2.delete();
+  if (!kept.length) return null;
+  const holes = new CrossSection(kept, 'Positive');
+  const z0 = b2.min[2] - 1, thick = b2.max[2] - b2.min[2] + 2;
+  let tool = holes.extrude(thick).translate([0, 0, z0]);
+  holes.delete();
+  if (back) { const t = tool.rotate(back); tool.delete(); tool = t; }
+  return { tool, count: kept.length, axis: ax };
+}
+
+function doLighten(o) {
+  const a = activeNode();
+  if (!a) { toast('肉抜きする図形を選んでください', true); return; }
+  if (!manifoldReady) { toast('演算エンジンを準備中です。少し待ってから試してください', true); return; }
+  let man = null;
+  try { man = nodeToManifold(a); } catch (e) { console.error(e); }
+  if (!man) { toast('この図形は肉抜きできません', true); return; }
+  let res = null, after = null, before = 0, afterVol = 0;
+  try {
+    res = buildLightenTool(man, o);
+    if (res) { before = manifoldVolume(man); after = Manifold.difference(man, res.tool); afterVol = manifoldVolume(after); after.delete(); }
+  } catch (e) { console.error(e); }
+  man.delete();
+  if (!res) { toast('穴を開けられる場所がありません。穴を小さく・外周の枠を狭く・上側の余白を小さくしてみてください', true); return; }
+  if (res.count > 1500) { res.tool.delete(); toast('穴の数が多すぎます（' + res.count + '個）。穴を大きくしてください', true); return; }
+  const geo = manifoldToGeometry(res.tool); res.tool.delete();
+  if (!geo) { toast('穴の形を作れませんでした', true); return; }
+  pushUndo();
+  const ctr = new THREE.Vector3(); geo.boundingBox.getCenter(ctr);
+  geo.translate(-ctr.x, -ctr.y, -ctr.z); geo.computeBoundingBox();
+  const kindName = { honey: 'ハニカム', truss: 'トラス', circle: '丸穴' }[o.kind];
+  const tool = newMesh(geo, '肉抜き穴（' + kindName + '）');
+  tool.userData.name = '肉抜き穴（' + kindName + '）';
+  tool.position.copy(ctr);
+  model.add(tool);                                   // ワールド座標で作ってから、親の下へ入れ替える
+  const parent = a.parent;
+  const g = newGroup('subtract');
+  g.userData.color = a.userData.color;
+  g.userData.name = a.userData.name + '（肉抜き）';
+  parent.add(g);
+  g.attach(a); g.attach(tool);                       // attach はワールド位置を保ったまま親を付け替える
+  centerGroupPivot(g);
+  selectNode(g);
+  requestRebuild();
+  const pct = before > 0 ? Math.round((1 - afterVol / before) * 100) : 0;
+  const axisName = ['X', 'Y', 'Z'][res.axis];
+  toast(`${kindName}の穴を${res.count}個開けました（${axisName}方向に貫通・体積 約${pct}%減）`);
+}
+
 function doHollow(wall, lidOpts, tube) {
   const a = activeNode();
   if (!a || a.userData.kind !== 'primitive' || !HOLLOW_TYPES.has(a.userData.type)) return;
@@ -2239,6 +2386,7 @@ function refreshProps() {
   $('ungroupBtn').textContent = isBool ? '結合を解除（中の図形に分解）' : 'グループを解除';
   $('popOutBtn').style.display = (m.parent && m.parent !== model) ? '' : 'none';
   $('editPathBtn').style.display = (m.userData.kind === 'primitive' && m.userData.type === 'sweep') ? '' : 'none';   // グループの中の図形だけ
+  $('lightenBtn').style.display = '';
   $('hollowBtn').style.display = (m.userData.kind === 'primitive' && HOLLOW_TYPES.has(m.userData.type)) ? '' : 'none';
   $('explodeBtn').style.display = (m.userData.kind === 'svg' && !m.userData.shapeIdx) ? '' : 'none';   // 分解前のSVG全体だけ
   if (isBool) {
@@ -2410,6 +2558,30 @@ function bakeScale(node) {
   $('dupBtn').onclick = duplicateSelected;
   $('delBtn').onclick = deleteSelected;
   $('dropBtn').onclick = dropToBed;
+  // ---- 肉抜き（軽量化）----
+  const ltHints = {
+    honey: ['穴の大きさ', '六角形の向かい合う辺の距離です。'],
+    truss: ['セルの一辺', '三角形1マスの一辺の長さです（実際の穴は、残す壁の分だけこれより小さくなります）。'],
+    circle: ['穴の直径', '丸穴の直径です。'],
+  };
+  const ltSync = () => { const h = ltHints[$('ltKind').value]; $('ltSizeLabel').textContent = h[0]; $('ltSizeHint').textContent = h[1]; };
+  $('ltKind').onchange = ltSync;
+  $('lightenBtn').onclick = () => {
+    if (!activeNode()) { toast('肉抜きする図形を選んでください', true); return; }
+    ltSync();
+    $('lightenModal').style.display = 'flex';
+  };
+  $('ltCancel').onclick = () => $('lightenModal').style.display = 'none';
+  $('ltGo').onclick = () => {
+    const o = {
+      kind: $('ltKind').value,
+      size: parseFloat($('ltSize').value), rib: parseFloat($('ltRib').value),
+      margin: parseFloat($('ltMargin').value), top: parseFloat($('ltTop').value) || 0,
+    };
+    if (!(o.size >= 3) || !(o.rib >= 0.8) || !(o.margin >= 1)) { toast('穴の大きさは3mm以上、壁は0.8mm以上、外周の枠は1mm以上にしてください', true); return; }
+    $('lightenModal').style.display = 'none';
+    doLighten(o);
+  };
   $('hollowBtn').onclick = () => {
     const a = activeNode();
     if (!a || a.userData.kind !== 'primitive' || !HOLLOW_TYPES.has(a.userData.type)) {
